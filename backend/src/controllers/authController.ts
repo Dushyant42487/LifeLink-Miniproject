@@ -1,4 +1,4 @@
-import { safeSupabaseSync } from '../models/db';
+import { safeSupabaseSync, persistRecordDirect, supabase, isSupabaseReal } from '../models/db';
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -22,10 +22,31 @@ export const login = async (req: Request, res: Response) => {
 
     if (role === 'donor') {
       user = db.donors.find(d => d.email.toLowerCase() === email.toLowerCase());
+      if (!user && isSupabaseReal) {
+        const { data } = await supabase.from('donors').select('*').ilike('email', email.trim()).maybeSingle();
+        if (data) {
+          user = data;
+          db.donors.push(user);
+        }
+      }
     } else if (role === 'hospital') {
       user = db.hospitals.find(h => h.email.toLowerCase() === email.toLowerCase());
+      if (!user && isSupabaseReal) {
+        const { data } = await supabase.from('hospitals').select('*').ilike('email', email.trim()).maybeSingle();
+        if (data) {
+          user = data;
+          db.hospitals.push(user);
+        }
+      }
     } else if (role === 'blood_bank') {
       user = db.bloodBanks.find(b => b.email.toLowerCase() === email.toLowerCase());
+      if (!user && isSupabaseReal) {
+        const { data } = await supabase.from('blood_banks').select('*').ilike('email', email.trim()).maybeSingle();
+        if (data) {
+          user = data;
+          db.bloodBanks.push(user);
+        }
+      }
     }
 
     if (!user) {
@@ -78,8 +99,18 @@ export const register = async (req: Request, res: Response) => {
     const existingBB = db.bloodBanks.find(b => b.email.toLowerCase() === email.toLowerCase());
 
     if (existingDonor || existingHosp || existingBB) {
-    
       return res.status(400).json({ success: false, error: 'User with this email already exists' });
+    }
+
+    if (isSupabaseReal) {
+      const [dCheck, hCheck, bCheck] = await Promise.all([
+        supabase.from('donors').select('id').ilike('email', email.trim()).maybeSingle(),
+        supabase.from('hospitals').select('id').ilike('email', email.trim()).maybeSingle(),
+        supabase.from('blood_banks').select('id').ilike('email', email.trim()).maybeSingle()
+      ]);
+      if (dCheck.data || hCheck.data || bCheck.data) {
+        return res.status(400).json({ success: false, error: 'User with this email already exists' });
+      }
     }
 
     const passwordHash = bcrypt.hashSync(password, 8);
@@ -131,6 +162,7 @@ export const register = async (req: Request, res: Response) => {
       };
 
       db.donors.push(newDonor);
+      await persistRecordDirect('donors', newDonor);
       db.saveSnapshot();
       const token = jwt.sign({ id, email, role: 'donor', name: newDonor.name }, JWT_SECRET, { expiresIn: '24h' });
       const { passwordHash: _, ...donorData } = newDonor;
@@ -176,6 +208,7 @@ export const register = async (req: Request, res: Response) => {
       };
 
       db.hospitals.push(newHospital);
+      await persistRecordDirect('hospitals', newHospital);
       db.saveSnapshot();
       const token = jwt.sign({ id, email, role: 'hospital', name: newHospital.hospitalName }, JWT_SECRET, { expiresIn: '24h' });
       const { passwordHash: _, ...hospData } = newHospital;
@@ -220,6 +253,7 @@ export const register = async (req: Request, res: Response) => {
       };
 
       db.bloodBanks.push(newBloodBank);
+      await persistRecordDirect('blood_banks', newBloodBank);
       db.saveSnapshot();
       const token = jwt.sign({ id, email, role: 'blood_bank', name: newBloodBank.bloodBankName }, JWT_SECRET, { expiresIn: '24h' });
       const { passwordHash: _, ...bbData } = newBloodBank;
@@ -251,10 +285,31 @@ export const getMe = async (req: AuthenticatedRequest, res: Response) => {
 
     if (role === 'donor') {
       user = db.donors.find(d => d.id === id);
+      if (!user && isSupabaseReal) {
+        const { data } = await supabase.from('donors').select('*').eq('id', id).maybeSingle();
+        if (data) {
+          user = data;
+          db.donors.push(user);
+        }
+      }
     } else if (role === 'hospital') {
       user = db.hospitals.find(h => h.id === id);
+      if (!user && isSupabaseReal) {
+        const { data } = await supabase.from('hospitals').select('*').eq('id', id).maybeSingle();
+        if (data) {
+          user = data;
+          db.hospitals.push(user);
+        }
+      }
     } else if (role === 'blood_bank') {
       user = db.bloodBanks.find(b => b.id === id);
+      if (!user && isSupabaseReal) {
+        const { data } = await supabase.from('blood_banks').select('*').eq('id', id).maybeSingle();
+        if (data) {
+          user = data;
+          db.bloodBanks.push(user);
+        }
+      }
     }
 
     if (!user) {

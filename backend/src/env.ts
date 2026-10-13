@@ -12,11 +12,11 @@ const loadEnv = (): void => {
   const backendEnvPath = path.resolve(__dirname, '../.env');
 
   if (fs.existsSync(rootEnvPath)) {
-    dotenv.config({ path: rootEnvPath });
+    dotenv.config({ path: rootEnvPath, override: true });
   } else if (fs.existsSync(backendEnvPath)) {
-    dotenv.config({ path: backendEnvPath });
+    dotenv.config({ path: backendEnvPath, override: true });
   } else {
-    dotenv.config();
+    dotenv.config({ override: true });
   }
 };
 

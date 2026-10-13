@@ -52,19 +52,30 @@ export function validateEnvironment(): EnvValidationResult {
   const rawCors = process.env.CORS_ALLOWED_ORIGINS || process.env.CORS_ORIGIN;
   let corsAllowedOrigins: string[] = [];
 
+  const defaultLocalOrigins = [
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:5173'
+  ];
+
   if (rawCors) {
     corsAllowedOrigins = rawCors
       .split(',')
       .map(o => o.trim())
       .filter(Boolean);
+
+    // In development mode, ensure standard local dev origins are permitted if not wildcard
+    if (!isProduction && !corsAllowedOrigins.includes('*')) {
+      for (const origin of defaultLocalOrigins) {
+        if (!corsAllowedOrigins.includes(origin)) {
+          corsAllowedOrigins.push(origin);
+        }
+      }
+    }
   } else if (!isProduction) {
-    // Default safe local dev origins
-    corsAllowedOrigins = [
-      'http://localhost:3000',
-      'http://localhost:5173',
-      'http://127.0.0.1:3000',
-      'http://127.0.0.1:5173'
-    ];
+    // Default to wildcard for local development
+    corsAllowedOrigins = ['*'];
   } else {
     warnings.push('[Security Warning] CORS_ALLOWED_ORIGINS is not set in production. Defaulting to strict same-origin.');
     corsAllowedOrigins = [];

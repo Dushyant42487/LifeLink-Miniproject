@@ -12,7 +12,7 @@ import hospitalRoutes from './routes/hospitalRoutes';
 import aiRoutes from './routes/aiRoutes';
 import publicRoutes from './routes/publicRoutes';
 import testRoutes from './routes/testRoutes';
-import { connectDatabase, supabase, safeSupabaseSync } from './models/db';
+import { connectDatabase, supabase, safeSupabaseSync, syncMutationToSupabase } from './models/db';
 import { db } from './models/store';
 
 // 1. Startup Environment & Security Validation
@@ -37,20 +37,14 @@ app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 // 6. Structured Operational & Audit Request Logger (with Request-ID propagation)
 app.use(requestLogger);
 
-// 7. Supabase Mutation Sync Middleware (Fire-and-forget sync with error containment)
+// 7. Supabase Mutation Sync Middleware (Sanitized fire-and-forget sync with error containment)
 app.use((req, res, next) => {
   const originalJson = res.json;
   res.json = function (body) {
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
-      Promise.all([
-        supabase.from('blood_units').upsert(db.bloodUnits),
-        supabase.from('blood_requests').upsert(db.bloodRequests),
-        supabase.from('donors').upsert(db.donors),
-        supabase.from('hospitals').upsert(db.hospitals),
-        supabase.from('blood_banks').upsert(db.bloodBanks)
-      ]).then(() => originalJson.call(this, body))
+      syncMutationToSupabase()
+        .then(() => originalJson.call(this, body))
         .catch((err: any) => {
-          // Log without breaking response cycle
           console.error('[Supabase Background Sync Notice]:', err?.message || err);
           originalJson.call(this, body);
         });

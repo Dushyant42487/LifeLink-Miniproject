@@ -28,15 +28,17 @@ export function createSecurityHeaders() {
   });
 }
 
-export function createCorsMiddleware(allowedOrigins: string[]) {
-  const isWildcardAllowed = allowedOrigins.length === 0 || allowedOrigins.includes('*');
+export function createCorsMiddleware(allowedOrigins: string[] = ['*']) {
+  const isWildcardAllowed = !allowedOrigins || allowedOrigins.length === 0 || allowedOrigins.includes('*');
 
   const corsOptions: CorsOptions = {
     origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps, curl, server-to-server)
-      if (!origin) return callback(null, true);
+      // Allow all origins when wildcard '*' is configured or when origin header is omitted
+      if (!origin || isWildcardAllowed) {
+        return callback(null, true);
+      }
 
-      if (isWildcardAllowed || allowedOrigins.includes(origin)) {
+      if (allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
 
@@ -53,6 +55,18 @@ export function createCorsMiddleware(allowedOrigins: string[]) {
 
       if (isSubdomain) {
         return callback(null, true);
+      }
+
+      // In development mode, permit localhost and 127.0.0.1 origins on any port
+      if (process.env.NODE_ENV !== 'production') {
+        try {
+          const originUrl = new URL(origin);
+          if (originUrl.hostname === 'localhost' || originUrl.hostname === '127.0.0.1') {
+            return callback(null, true);
+          }
+        } catch {
+          // ignore URL parsing error
+        }
       }
 
       callback(new Error(`Origin ${origin} is not allowed by LifeLink CORS policy.`));
