@@ -1,0 +1,41 @@
+CREATE TABLE blood_units (
+    id TEXT PRIMARY KEY,
+    "bloodBankId" TEXT NOT NULL,
+    "bloodBankName" TEXT NOT NULL,
+    "donorId" TEXT,
+    "donorCode" TEXT,
+    "bloodGroup" TEXT NOT NULL,
+    "component" TEXT NOT NULL,
+    "volumeMl" INTEGER NOT NULL,
+    "collectionDate" TEXT NOT NULL,
+    "expiryDate" TEXT NOT NULL,
+    "testingStatus" TEXT NOT NULL DEFAULT 'Pending',
+    "availability" TEXT NOT NULL DEFAULT 'Quarantined',
+    "storageLocation" TEXT NOT NULL,
+    "source" TEXT DEFAULT 'Voluntary Donation',
+    "reservedForRequestId" TEXT,
+    notes TEXT,
+    "createdAt" TEXT NOT NULL
+);
+
+CREATE TABLE blood_requests (
+    id TEXT PRIMARY KEY,
+    "hospitalId" TEXT NOT NULL,
+    "hospitalName" TEXT NOT NULL,
+    "bloodBankId" TEXT,
+    "bloodBankName" TEXT,
+    "bloodGroup" TEXT NOT NULL,
+    "component" TEXT NOT NULL,
+    "quantityUnits" INTEGER NOT NULL,
+    "fulfilledUnits" INTEGER DEFAULT 0,
+    urgency TEXT DEFAULT 'Routine',
+    "patientReferenceId" TEXT NOT NULL,
+    department TEXT,
+    "requiredByDate" TEXT,
+    status TEXT DEFAULT 'Pending',
+    "assignedUnitIds" JSONB,
+    notes TEXT,
+    "createdAt" TEXT NOT NULL,
+    "updatedAt" TEXT NOT NULL,
+    timeline JSONB
+);
