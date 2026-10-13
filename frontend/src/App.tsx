@@ -18,9 +18,11 @@ import { DonorHistory } from './pages/donor/DonorHistory';
 import { DonorEmergencyAlerts } from './pages/donor/DonorEmergencyAlerts';
 import { DonorProfile } from './pages/donor/DonorProfile';
 import { DonorCampsPage } from './pages/donor/DonorCampsPage';
+import { DonorNearbyHospitals } from './pages/donor/DonorNearbyHospitals';
 
 // Hospital Module Pages
 import { HospitalDashboard } from './pages/hospital/HospitalDashboard';
+import { HospitalProfilePage } from './pages/hospital/HospitalProfilePage';
 import { SearchBloodPage } from './pages/hospital/SearchBloodPage';
 import { CreateRequestPage } from './pages/hospital/CreateRequestPage';
 import { HospitalRequestsPage } from './pages/hospital/HospitalRequestsPage';
@@ -147,6 +149,10 @@ export const App: React.FC = () => {
               path="/donor/emergency-alerts" 
               element={<ProtectedRoute allowedRoles={['donor']}><DonorEmergencyAlerts /></ProtectedRoute>} 
             />
+            <Route 
+              path="/donor/hospitals" 
+              element={<ProtectedRoute allowedRoles={['donor']}><DonorNearbyHospitals /></ProtectedRoute>} 
+            />
 
             {/* ========================================================= */}
             {/* 3. HOSPITAL MODULE ROUTES (Strictly Role 'hospital')       */}
@@ -154,6 +160,10 @@ export const App: React.FC = () => {
             <Route 
               path="/hospital/dashboard" 
               element={<ProtectedRoute allowedRoles={['hospital']}><HospitalDashboard /></ProtectedRoute>} 
+            />
+            <Route 
+              path="/hospital/profile" 
+              element={<ProtectedRoute allowedRoles={['hospital']}><HospitalProfilePage /></ProtectedRoute>} 
             />
             <Route 
               path="/hospital/availability" 

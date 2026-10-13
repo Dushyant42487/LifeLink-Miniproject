@@ -48,8 +48,8 @@ export const CollectionsPage: React.FC = () => {
   const [volumeMl, setVolumeMl] = useState('450');
   const [collectionDate, setCollectionDate] = useState(new Date().toISOString().split('T')[0]);
   const [collectionTime, setCollectionTime] = useState(new Date().toTimeString().slice(0, 5));
-  const [phlebotomistName, setPhlebotomistName] = useState('Staff Phlebotomist');
-  const [notes, setNotes] = useState('Standard venipuncture whole-blood collection completed without adverse reactions.');
+  const [phlebotomistName, setPhlebotomistName] = useState('');
+  const [notes, setNotes] = useState('');
   const [submittingCollection, setSubmittingCollection] = useState(false);
   const [createdCollection, setCreatedCollection] = useState<BloodCollectionRecord | null>(null);
   const [collectionError, setCollectionError] = useState<string | null>(null);
@@ -83,12 +83,12 @@ export const CollectionsPage: React.FC = () => {
     organizer: '',
     location: '',
     address: '',
-    city: 'Metropolis',
+    city: '',
     startDate: new Date().toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0],
-    timeSlot: '09:00 AM - 04:00 PM',
+    timeSlot: '',
     targetUnits: 50,
-    contactPhone: '+1-555-0199',
+    contactPhone: '',
     description: '',
     isUrgent: false
   });
@@ -111,17 +111,17 @@ export const CollectionsPage: React.FC = () => {
   // Fractionation Components Config
   const [fracRbc, setFracRbc] = useState(true);
   const [fracRbcVolume, setFracRbcVolume] = useState('250');
-  const [fracRbcBay, setFracRbcBay] = useState('Quarantine Bay RBC-1');
+  const [fracRbcBay, setFracRbcBay] = useState('');
 
   const [fracPlasma, setFracPlasma] = useState(true);
   const [fracPlasmaVolume, setFracPlasmaVolume] = useState('200');
-  const [fracPlasmaBay, setFracPlasmaBay] = useState('Quarantine Bay FFP-1');
+  const [fracPlasmaBay, setFracPlasmaBay] = useState('');
 
   const [fracPlatelets, setFracPlatelets] = useState(false);
   const [fracPlateletsVolume, setFracPlateletsVolume] = useState('50');
-  const [fracPlateletsBay, setFracPlateletsBay] = useState('Quarantine Bay PLT-1');
+  const [fracPlateletsBay, setFracPlateletsBay] = useState('');
 
-  const [processingNotes, setProcessingNotes] = useState('Component separation by high-speed refrigerated centrifugation.');
+  const [processingNotes, setProcessingNotes] = useState('');
 
   // ==========================================
   // EFFECTS & FETCHERS

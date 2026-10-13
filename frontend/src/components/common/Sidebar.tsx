@@ -100,6 +100,10 @@ export const Sidebar: React.FC = () => {
                 <Compass className="w-4 h-4" />
                 <span>Camps & Requests</span>
               </NavLink>
+              <NavLink to="/donor/hospitals" className={linkClasses}>
+                <Building2 className="w-4 h-4 text-rose-500" />
+                <span>Nearby Hospitals</span>
+              </NavLink>
               <NavLink to="/donor/alerts" className={linkClasses}>
                 <AlertCircle className="w-4 h-4 text-rose-500" />
                 <span>Emergency Alerts</span>
@@ -140,6 +144,10 @@ export const Sidebar: React.FC = () => {
               <NavLink to="/hospital/logistics" className={linkClasses}>
                 <Navigation className="w-4 h-4 text-emerald-600" />
                 <span>Logistics & Regional Map</span>
+              </NavLink>
+              <NavLink to="/hospital/profile" className={linkClasses}>
+                <Building2 className="w-4 h-4 text-blue-600" />
+                <span>Hospital Profile & Location</span>
               </NavLink>
             </>
           )}

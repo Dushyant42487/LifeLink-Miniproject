@@ -44,8 +44,7 @@ const calculateDaysRemaining = (expiryDateStr: string): number => {
 const resolveBloodBank = (req: AuthenticatedRequest) => {
   const userId = req.user?.id;
   if (!userId) return null;
-  const bb = db.bloodBanks.find(b => b.id === userId || b.registrationId === userId);
-  return bb || db.bloodBanks.find(b => b.id === 'bb-1') || null;
+  return db.bloodBanks.find(b => b.id === userId || b.registrationId === userId) || null;
 };
 
 // Memory cache for rapid duplicate collection submission protection
@@ -356,8 +355,9 @@ export const reserveBloodUnit = async (req: AuthenticatedRequest, res: Response)
   }
 
   unit.availability = 'Reserved';
-  unit.reservedForRequestId = requestId || 'Direct Surgical Reservation';
+  if (requestId) unit.reservedForRequestId = requestId;
   if (notes) unit.notes = notes;
+  db.saveSnapshot();
 
   if (requestId) {
     const request = db.bloodRequests.find(r => r.id === requestId);
@@ -685,6 +685,8 @@ export const updateTestingStatus = async (req: AuthenticatedRequest, res: Respon
     }
   }
 
+  db.saveSnapshot();
+
   res.json({
     success: true,
     message: `Testing status updated to ${record.status}`,
@@ -892,7 +894,7 @@ export const recordBloodCollection = async (req: AuthenticatedRequest, res: Resp
     locationType: validatedCamp ? 'Mobile Camp' : (locationType || 'In-House Phlebotomy'),
     campId: validatedCamp?.id,
     campTitle: validatedCamp?.title,
-    phlebotomistName: phlebotomistName || req.user?.name || 'Dr. Sarah Jenkins',
+    phlebotomistName: phlebotomistName ? phlebotomistName.trim() : (req.user?.name || 'Staff Phlebotomist'),
     status: 'Collected',
     fractionationStatus: 'Pending',
     notes,
@@ -931,6 +933,7 @@ export const recordBloodCollection = async (req: AuthenticatedRequest, res: Resp
     notes: `Initial mandatory disease screening queued for collection ${colId}.`
   };
   db.testingRecords.unshift(newTestingRecord);
+  db.saveSnapshot();
 
   res.status(201).json({
     success: true,
@@ -1089,18 +1092,18 @@ export const createBloodBankCamp = async (req: AuthenticatedRequest, res: Respon
   }
 
   const campId = `CAMP-${Date.now()}`;
-  const campCity = city || bb?.city || 'Metro City';
+  const campCity = city || bb?.city || '';
   const newCamp: DonationCamp = {
     id: campId,
     title,
-    organizer: organizer || bb?.bloodBankName || bb?.name || 'Regional Blood Center',
+    organizer: organizer || bb?.bloodBankName || bb?.name || '',
     bloodBankId: bankId,
     location,
     city: campCity,
     address: address || location,
     startDate,
     endDate: endDate || startDate,
-    timeSlot: timeSlot || '09:00 AM - 05:00 PM',
+    timeSlot: timeSlot || '',
     targetUnits: target,
     registeredCount: 0,
     targetBloodGroups,
@@ -1112,6 +1115,7 @@ export const createBloodBankCamp = async (req: AuthenticatedRequest, res: Respon
   };
 
   db.donationCamps.push(newCamp);
+  db.saveSnapshot();
 
   res.status(201).json({
     success: true,
@@ -1462,6 +1466,7 @@ export const processFractionation = async (req: AuthenticatedRequest, res: Respo
     collection.fractionationBatchId = batchId;
     collection.status = 'Fractionated';
     collection.updatedAt = nowIso;
+    db.saveSnapshot();
 
     res.status(201).json({
       success: true,
@@ -2113,6 +2118,8 @@ export const allocateUnitsToRequest = async (req: AuthenticatedRequest, res: Res
     actor: req.user?.name || 'Blood Bank Staff'
   });
 
+  db.saveSnapshot();
+
   res.json({
     success: true,
     message: `Successfully allocated ${uniqueUnitIds.length} unit(s) to requisition ${request.id}.`,
@@ -2333,6 +2340,8 @@ export const prepareDispatch = async (req: AuthenticatedRequest, res: Response) 
     actor: req.user?.name || 'Blood Bank Dispatch'
   });
 
+  db.saveSnapshot();
+
   res.json({
     success: true,
     message: `Dispatch ${dispatchId} prepared successfully.`,
@@ -2417,6 +2426,8 @@ export const confirmDispatch = async (req: AuthenticatedRequest, res: Response) 
     actor: req.user?.name || 'Blood Bank Dispatch Officer'
   });
 
+  db.saveSnapshot();
+
   res.json({
     success: true,
     message: `Requisition ${request.id} dispatched successfully to transport courier.`,
@@ -2456,17 +2467,17 @@ export const getDispatchSlip = async (req: AuthenticatedRequest, res: Response) 
     requestId: dispatch.requestId,
     bloodBank: {
       id: bank?.id || bankId,
-      name: bank?.bloodBankName || bank?.name || 'Regional Blood Center',
-      registrationId: bank?.registrationId || 'VERIFIED',
-      phone: bank?.phone || '+1 (555) 300-8800',
-      address: bank?.address || '100 Medical Center Parkway',
-      city: bank?.city || 'Metro City',
-      state: bank?.state || 'NY'
+      name: bank?.bloodBankName || bank?.name || 'Blood Center',
+      registrationId: bank?.registrationId || '',
+      phone: bank?.phone || '',
+      address: bank?.address || '',
+      city: bank?.city || '',
+      state: bank?.state || ''
     },
     hospital: {
       id: dispatch.hospitalId,
       name: dispatch.hospitalName,
-      department: dispatch.department || request?.department || 'General Surgery',
+      department: dispatch.department || request?.department || '',
       patientReferenceId: dispatch.patientReferenceId
     },
     clinicalRequisition: {
@@ -3078,6 +3089,8 @@ export const recordTemperatureReading = async (req: AuthenticatedRequest, res: R
       equipment.status = 'Operational';
     }
   }
+
+  db.saveSnapshot();
 
   return res.status(201).json({
     success: true,

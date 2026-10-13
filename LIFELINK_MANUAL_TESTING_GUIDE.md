@@ -19,7 +19,7 @@ Follow this guide to execute an end-to-end verification starting from a complete
 ### 1.2 Configuration & Ports
 - **Backend API**: `http://localhost:5001`
 - **Frontend Web Portal**: `http://localhost:3000`
-- **Database Engine**: In-memory `DataStore` (with optional Supabase persistence if credentials are provided in `.env`).
+- **Database Engine**: In-memory `DataStore` backed by local disk snapshot persistence (`backend/data/datastore.json`) and optional Supabase database sync if credentials are provided in `.env`.
 
 #### Environment Configuration (.env in project root or backend/.env)
 ```env
@@ -416,7 +416,7 @@ Execute these negative test checks to ensure complete privacy across facilities:
 | **Duplicate Collection** | Submit two identical phlebotomy collections for the same donor on the same day. | Server rejects the second attempt with `409 Conflict`. | Use a different donor or proceed with processing the first collection. |
 | **Untested Unit Allocation** | Attempt to allocate a Quarantined unit directly to a requisition. | Unit does not appear in eligible list; manual barcode entry returns `400 Bad Request`. | Complete lab testing first to clear the unit. |
 | **Cross-Tenant Access** | Access another hospital's requisition ID directly in the URL `/hospital/requests/:otherId`. | Redirects or displays `403 Access Denied`. | Switch back to the authenticated hospital's own orders. |
-| **Backend Restart Persistence** | Create a donor and blood unit, restart the backend server, and reload the web page. | In-memory sandbox resets cleanly to empty; if Supabase credentials are configured, records persist. | Use the documented startup commands to test either configuration. |
+| **Backend Restart Persistence** | Create a donor and blood unit, restart the backend server, and reload the web page. | Newly created records survive backend restart and persist via `datastore.json`. To reset cleanly back to zero, execute `curl -X POST http://localhost:5001/api/test/reset`. | Records persist automatically on write. |
 
 ---
 
@@ -426,7 +426,7 @@ Execute these negative test checks to ensure complete privacy across facilities:
 | :--- | :--- | :--- |
 | `ERR_CONNECTION_REFUSED` on port 5001 | Backend server is not running. | Run `cd backend && npm run dev` in a terminal. |
 | Port 5001 or 3000 already in use | Previous process lingering in background. | Run `lsof -i :5001` or `lsof -i :3000`, then `kill -9 <PID>`. |
-| Login fails with `401 Invalid email or password` | Testing against clean database without re-registering account. | Accounts do not persist across in-memory server restarts; register a fresh test account at `/register`. |
+| Login fails with `401 Invalid email or password` | Attempting to log in with an account that has not been registered yet, or after resetting via `/api/test/reset`. | Register a fresh test account at `/register` using genuine user input. |
 | "Unit is either not in available inventory or clinically incompatible" | The unit is still in `Quarantined` status or blood group is incompatible. | Navigate to `/blood-bank/testing` and click **Clear & Release to Stock**. |
 | "Cannot confirm receipt: Requisition is currently in 'Pending' status" | Requisition must be allocated and dispatched before hospital receipt. | Log in as blood bank, allocate units, prepare dispatch, and confirm courier handoff first. |
 

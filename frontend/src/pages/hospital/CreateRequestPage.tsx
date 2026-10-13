@@ -17,7 +17,7 @@ export const CreateRequestPage: React.FC<CreateRequestPageProps> = ({ forcedInit
   const initialUrgency = forcedInitialUrgency || (searchParams.get('urgency') as RequestUrgency) || 'Routine';
   const initialGroup = (searchParams.get('bloodGroup') as BloodGroup) || 'O+';
   const initialComponent = (searchParams.get('component') as BloodComponent) || 'RBC';
-  const initialBloodBankId = searchParams.get('bloodBankId') || 'bb-1';
+  const initialBloodBankId = searchParams.get('bloodBankId') || '';
   const initialUnitId = searchParams.get('unitId') || '';
 
   // Preserve search filters when returning to availability search (Phase 4A)
@@ -36,9 +36,9 @@ export const CreateRequestPage: React.FC<CreateRequestPageProps> = ({ forcedInit
   const [urgency, setUrgency] = useState<RequestUrgency>(initialUrgency);
   const [bloodGroup, setBloodGroup] = useState<BloodGroup>(initialGroup);
   const [component, setComponent] = useState<BloodComponent>(initialComponent);
-  const [quantityUnits, setQuantityUnits] = useState<number>(initialUnitId ? 1 : initialUrgency === 'Emergency' ? 4 : 2);
+  const [quantityUnits, setQuantityUnits] = useState<number>(1);
   const [patientReferenceId, setPatientReferenceId] = useState<string>('');
-  const [department, setDepartment] = useState<string>(initialUrgency === 'Emergency' ? 'Emergency & Trauma Surgery' : 'General Surgery');
+  const [department, setDepartment] = useState<string>('');
   
   // Calculate default required-by datetime based on urgency
   const calculateDefaultRequiredBy = (urgencyLevel: RequestUrgency) => {

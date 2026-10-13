@@ -93,6 +93,12 @@ export interface User {
   phone: string;
   createdAt: string;
   avatarUrl?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface DonorProfile extends User {
@@ -103,6 +109,9 @@ export interface DonorProfile extends User {
   address: string;
   city: string;
   state: string;
+  postalCode?: string;
+  latitude?: number;
+  longitude?: number;
   emergencyContact: {
     name: string;
     phone: string;
@@ -133,10 +142,11 @@ export interface HospitalProfile extends User {
   address: string;
   city: string;
   state: string;
+  postalCode?: string;
   contactPerson: string;
   emergencyPhone: string;
-  latitude: number;
-  longitude: number;
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface BloodBankProfile extends User {
@@ -147,9 +157,10 @@ export interface BloodBankProfile extends User {
   address: string;
   city: string;
   state: string;
+  postalCode?: string;
   emergencyPhone: string;
-  latitude: number;
-  longitude: number;
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface BloodUnit {

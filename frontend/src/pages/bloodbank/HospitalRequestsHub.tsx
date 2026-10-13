@@ -50,7 +50,7 @@ export const HospitalRequestsHub: React.FC = () => {
   // Dispatch Preparation Form State
   const [showDispatchModal, setShowDispatchModal] = useState(false);
   const [courierType, setCourierType] = useState<'Dedicated Hospital Courier' | 'Blood Bank Transport' | 'External Medical Courier'>('Dedicated Hospital Courier');
-  const [courierRef, setCourierRef] = useState('HOSP-AMB-04');
+  const [courierRef, setCourierRef] = useState('');
   const [packagingType, setPackagingType] = useState('Standard Passive Thermal Container with Ice Gel Packs');
   const [targetTemp, setTargetTemp] = useState('2°C to 6°C (Chilled)');
   const [specialInstructions, setSpecialInstructions] = useState('');

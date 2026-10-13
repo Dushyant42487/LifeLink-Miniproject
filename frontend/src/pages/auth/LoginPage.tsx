@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { UserRole } from '../../types';
-import { Droplet, Lock, Mail, Users, Building2, Landmark, AlertCircle, Sparkles } from 'lucide-react';
+import { Droplet, Lock, Mail, Users, Building2, Landmark, AlertCircle } from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -10,7 +10,7 @@ export const LoginPage: React.FC = () => {
 
   const [role, setRole] = useState<UserRole>(initialRole);
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('password123');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -26,20 +26,9 @@ export const LoginPage: React.FC = () => {
     }
   }, [user, authLoading, navigate]);
 
-  // Set default demo emails on role change
   const handleRoleChange = (newRole: UserRole) => {
     setRole(newRole);
-    if (newRole === 'donor') setEmail('alex.mercer@example.com');
-    if (newRole === 'hospital') setEmail('emergency@apellogeneral.org');
-    if (newRole === 'blood_bank') setEmail('central@citybloodbank.org');
   };
-
-  // Prepopulate email on initial mount
-  useEffect(() => {
-    if (initialRole === 'hospital') setEmail('emergency@apellogeneral.org');
-    else if (initialRole === 'blood_bank') setEmail('central@citybloodbank.org');
-    else setEmail('alex.mercer@example.com');
-  }, [initialRole]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -119,21 +108,6 @@ export const LoginPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Quick Demo Pre-fill helper */}
-          <div className="mb-6 bg-rose-50/60 border border-rose-200/80 rounded-xl p-3 text-xs text-rose-900 flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <Sparkles className="w-4 h-4 text-rose-600 shrink-0" />
-              <span>Demo Account for {role.replace('_', ' ')}</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => handleRoleChange(role)}
-              className="text-[10px] font-bold text-rose-700 underline cursor-pointer"
-            >
-              Fill Credentials
-            </button>
-          </div>
-
           {error && (
             <div className="mb-4 bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-700 flex items-center space-x-2">
               <AlertCircle className="w-4 h-4 shrink-0" />
@@ -153,7 +127,7 @@ export const LoginPage: React.FC = () => {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder={role === 'donor' ? 'alex.mercer@example.com' : role === 'hospital' ? 'emergency@apellogeneral.org' : 'central@citybloodbank.org'}
+                  placeholder={role === 'donor' ? 'donor@example.com' : role === 'hospital' ? 'hospital@example.com' : 'bloodbank@example.com'}
                   className="block w-full pl-9 pr-3 py-2.5 text-xs border border-slate-300 rounded-xl focus:ring-rose-500 focus:border-rose-500 bg-white"
                 />
               </div>

@@ -10,28 +10,28 @@ export const RegisterPage: React.FC = () => {
 
   const [role, setRole] = useState<UserRole>(initialRole);
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('password123');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   // Donor fields
   const [name, setName] = useState('');
   const [bloodGroup, setBloodGroup] = useState<BloodGroup>('O+');
-  const [dob, setDob] = useState('1998-05-12');
+  const [dob, setDob] = useState('');
   const [gender, setGender] = useState('Male');
-  const [phone, setPhone] = useState('+1 (555) 321-7788');
-  const [address, setAddress] = useState('120 Healthcare Ave');
-  const [city, setCity] = useState('Metro City');
-  const [state, setState] = useState('NY');
-  const [weightKg, setWeightKg] = useState('68');
-  const [emergName, setEmergName] = useState('Jane Mercer');
-  const [emergPhone, setEmergPhone] = useState('+1 (555) 999-8877');
+  const [phone, setPhone] = useState('');
+  const [address, setAddress] = useState('');
+  const [city, setCity] = useState('');
+  const [state, setState] = useState('');
+  const [weightKg, setWeightKg] = useState('');
+  const [emergName, setEmergName] = useState('');
+  const [emergPhone, setEmergPhone] = useState('');
 
   // Facility fields (Hospital / Blood Bank)
   const [facilityName, setFacilityName] = useState('');
   const [registrationId, setRegistrationId] = useState('');
   const [contactPerson, setContactPerson] = useState('');
-  const [emergencyPhone, setEmergencyPhone] = useState('+1 (555) 911-4455');
+  const [emergencyPhone, setEmergencyPhone] = useState('');
 
   const { user, loading: authLoading, register } = useAuth();
   const navigate = useNavigate();
@@ -48,50 +48,67 @@ export const RegisterPage: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    setLoading(true);
 
-    let payload: any = { email, password };
+    if (!email.trim() || !password) {
+      setError('Email and password are required.');
+      return;
+    }
+
+    let payload: any = { email: email.trim(), password };
 
     if (role === 'donor') {
+      if (!name.trim()) {
+        setError('Full name is required for donor registration.');
+        return;
+      }
       payload = {
         ...payload,
-        name: name || 'New Donor',
+        name: name.trim(),
         bloodGroup,
-        dob,
-        gender,
-        phone,
-        address,
-        city,
-        state,
-        weightKg: Number(weightKg),
-        emergencyContact: { name: emergName, phone: emergPhone, relation: 'Family' }
+        dob: dob || undefined,
+        gender: gender || undefined,
+        phone: phone.trim() || undefined,
+        address: address.trim() || undefined,
+        city: city.trim() || undefined,
+        state: state.trim() || undefined,
+        weightKg: weightKg ? Number(weightKg) : undefined,
+        emergencyContact: emergName.trim() ? { name: emergName.trim(), phone: emergPhone.trim(), relation: 'Family' } : undefined
       };
     } else if (role === 'hospital') {
+      if (!facilityName.trim() || !registrationId.trim()) {
+        setError('Hospital name and license ID are required.');
+        return;
+      }
       payload = {
         ...payload,
-        hospitalName: facilityName || 'St. Jude General',
-        licenseId: registrationId || `HOSP-NY-${Math.floor(1000 + Math.random() * 9000)}`,
-        contactPerson: contactPerson || 'Duty Officer',
-        phone,
-        emergencyPhone,
-        address,
-        city,
-        state
+        hospitalName: facilityName.trim(),
+        licenseId: registrationId.trim(),
+        contactPerson: contactPerson.trim() || undefined,
+        phone: phone.trim() || undefined,
+        emergencyPhone: emergencyPhone.trim() || undefined,
+        address: address.trim() || undefined,
+        city: city.trim() || undefined,
+        state: state.trim() || undefined
       };
     } else if (role === 'blood_bank') {
+      if (!facilityName.trim() || !registrationId.trim()) {
+        setError('Blood bank name and registration ID are required.');
+        return;
+      }
       payload = {
         ...payload,
-        bloodBankName: facilityName || 'Metro Regional Blood Center',
-        registrationId: registrationId || `BB-LIC-${Math.floor(1000 + Math.random() * 9000)}`,
-        contactPerson: contactPerson || 'Lab Director',
-        phone,
-        emergencyPhone,
-        address,
-        city,
-        state
+        bloodBankName: facilityName.trim(),
+        registrationId: registrationId.trim(),
+        contactPerson: contactPerson.trim() || undefined,
+        phone: phone.trim() || undefined,
+        emergencyPhone: emergencyPhone.trim() || undefined,
+        address: address.trim() || undefined,
+        city: city.trim() || undefined,
+        state: state.trim() || undefined
       };
     }
 
+    setLoading(true);
     const res = await register(role, payload);
     setLoading(false);
 

@@ -137,11 +137,22 @@ export const donorApi = {
   markAllNotificationsRead: () => apiFetch('/donors/notifications/read-all', { method: 'PATCH' }),
 
   // Location Search
-  searchLocations: (q: string) => apiFetch(`/donors/location-search?q=${encodeURIComponent(q)}`)
+  searchLocations: (q: string) => apiFetch(`/donors/location-search?q=${encodeURIComponent(q)}`),
+
+  // Nearby Hospital Discovery (Phase 6)
+  getNearbyHospitals: (params?: { lat?: number; lng?: number; radius?: number | string }) => {
+    const q = new URLSearchParams();
+    if (params?.lat !== undefined && params?.lat !== null) q.set('lat', String(params.lat));
+    if (params?.lng !== undefined && params?.lng !== null) q.set('lng', String(params.lng));
+    if (params?.radius !== undefined && params?.radius !== null) q.set('radius', String(params.radius));
+    return apiFetch(`/donors/nearby-hospitals${q.toString() ? `?${q.toString()}` : ''}`);
+  }
 };
 
 // Hospital API Endpoints
 export const hospitalApi = {
+  getProfile: () => apiFetch('/hospitals/profile'),
+  updateProfile: (data: any) => apiFetch('/hospitals/profile', { method: 'PUT', body: JSON.stringify(data) }),
   getDashboard: () => apiFetch('/hospitals/dashboard'),
   searchBlood: (params: { bloodGroup?: string; component?: string; urgency?: string }) => {
     const query = new URLSearchParams();

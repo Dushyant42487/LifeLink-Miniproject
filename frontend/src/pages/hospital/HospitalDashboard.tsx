@@ -21,9 +21,11 @@ import {
   ShieldCheck,
   X,
   Boxes,
-  ArrowRight
+  ArrowRight,
+  MapPin
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
+import { isValidCoordinate } from '../../utils/geo';
 
 export const HospitalDashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -124,10 +126,10 @@ export const HospitalDashboard: React.FC = () => {
   };
 
   // Authenticated hospital identity resolution
-  const facilityName = (user as any)?.hospitalName || user?.name || data?.facility?.hospitalName || 'Apollo General Hospital';
-  const licenseId = (user as any)?.licenseId || data?.facility?.licenseId || 'HOSP-VERIFIED';
-  const verificationStatus = (user as any)?.verificationStatus || data?.facility?.verificationStatus || 'Verified';
-  const facilityCity = (user as any)?.city || data?.facility?.city || 'Metro City';
+  const facilityName = (user as any)?.hospitalName || user?.name || data?.facility?.hospitalName || 'Hospital';
+  const licenseId = (user as any)?.licenseId || data?.facility?.licenseId || '';
+  const verificationStatus = (user as any)?.verificationStatus || data?.facility?.verificationStatus || 'Pending Verification';
+  const facilityCity = (user as any)?.city || data?.facility?.city || '';
 
   // Derived metrics from authoritative backend collection
   const metrics = data?.metrics || { 
@@ -223,6 +225,27 @@ export const HospitalDashboard: React.FC = () => {
           >
             Retry
           </button>
+        </div>
+      )}
+
+      {/* Location Configuration Warning Banner */}
+      {data && !isValidCoordinate(data.facility?.latitude, data.facility?.longitude) && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center space-x-2.5">
+            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+            <div>
+              <h4 className="font-bold text-amber-950">Facility Coordinates Not Configured</h4>
+              <p className="text-amber-800 text-[11px] mt-0.5">
+                Your hospital location is missing GPS coordinates. Donors cannot calculate distance or discover this hospital until organization coordinates are configured.
+              </p>
+            </div>
+          </div>
+          <Link
+            to="/hospital/profile"
+            className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors shrink-0 text-center"
+          >
+            Configure Hospital Location
+          </Link>
         </div>
       )}
 

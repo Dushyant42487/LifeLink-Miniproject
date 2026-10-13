@@ -78,7 +78,7 @@ export const AIInsightsPage: React.FC = () => {
       {alertSent && (
         <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-emerald-800 text-xs flex items-center space-x-2 animate-bounce">
           <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-          <span><strong>Emergency Alert Deployed!</strong> Notifications sent to 14 eligible O- Negative donors in Metro City radius.</span>
+          <span><strong>Emergency Alert Deployed!</strong> Urgent notification broadcast initiated to eligible registered donors.</span>
         </div>
       )}
 

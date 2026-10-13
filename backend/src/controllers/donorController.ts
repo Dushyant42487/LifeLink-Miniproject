@@ -3,6 +3,7 @@ import { Response } from 'express';
 import { db } from '../models/store';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { EmergencyResponse } from '../models/types';
+import { isValidCoordinate, parseCoordinates, calcHaversineKm } from '../utils/geo';
 
 export const getDonorProfile = async (req: AuthenticatedRequest, res: Response) => {
   await safeSupabaseSync();
@@ -20,13 +21,28 @@ export const updateDonorProfile = async (req: AuthenticatedRequest, res: Respons
   const donor = db.donors.find(d => d.id === req.user?.id);
   if (!donor)  return res.status(404).json({ success: false, error: 'Donor profile not found' });
 
-  const { name, phone, address, city, state, emergencyContact, notificationPreferences, weightKg, travelRadiusKm, pauseInvitations } = req.body;
+  const { name, phone, address, city, state, postalCode, latitude, longitude, emergencyContact, notificationPreferences, weightKg, travelRadiusKm, pauseInvitations } = req.body;
+
+  if (latitude !== undefined || longitude !== undefined) {
+    if (latitude === null && longitude === null) {
+      donor.latitude = undefined;
+      donor.longitude = undefined;
+    } else {
+      const coordParsed = parseCoordinates(latitude, longitude);
+      if (coordParsed.error) {
+        return res.status(400).json({ success: false, error: coordParsed.error });
+      }
+      donor.latitude = coordParsed.lat;
+      donor.longitude = coordParsed.lng;
+    }
+  }
 
   if (name) donor.name = name;
   if (phone) donor.phone = phone;
-  if (address) donor.address = address;
-  if (city) donor.city = city;
-  if (state) donor.state = state;
+  if (address !== undefined) donor.address = String(address).trim();
+  if (city !== undefined) donor.city = String(city).trim();
+  if (state !== undefined) donor.state = String(state).trim();
+  if (postalCode !== undefined) donor.postalCode = String(postalCode).trim();
   if (emergencyContact) donor.emergencyContact = emergencyContact;
   if (notificationPreferences) donor.notificationPreferences = notificationPreferences;
   if (weightKg !== undefined) donor.weightKg = Number(weightKg);
@@ -34,6 +50,7 @@ export const updateDonorProfile = async (req: AuthenticatedRequest, res: Respons
   if (pauseInvitations !== undefined) donor.pauseInvitations = Boolean(pauseInvitations);
 
   const { passwordHash, ...data } = donor;
+  db.saveSnapshot();
 
   res.json({ success: true, message: 'Profile updated successfully', donor: data });
 };
@@ -204,8 +221,7 @@ export const respondToEmergencyAlert = async (req: AuthenticatedRequest, res: Re
 
   db.emergencyResponses.push(response);
   alert.responsesCount = (alert.responsesCount || 0) + 1;
-
-
+  db.saveSnapshot();
 
   res.json({
     success: true,
@@ -261,14 +277,14 @@ export const createCampRequest = async (req: AuthenticatedRequest, res: Response
     organizerName: organizerName.trim(),
     organizerEmail: organizerEmail.trim(),
     organizerPhone: organizerPhone.trim(),
-    organizerRole: organizerRole?.trim() || 'Organizer',
+    organizerRole: organizerRole?.trim() || '',
     proposedDate,
-    preferredTimeSlot: preferredTimeSlot || '09:00 AM - 04:00 PM',
+    preferredTimeSlot: preferredTimeSlot || '',
     venueAddress: venueAddress.trim(),
     city: city.trim(),
     postalCode: postalCode?.trim() || '',
-    estimatedParticipants: Number(estimatedParticipants) || 50,
-    expectedDonations: expectedDonations ? Number(expectedDonations) : Math.round((Number(estimatedParticipants) || 50) * 0.6),
+    estimatedParticipants: Number(estimatedParticipants) || 0,
+    expectedDonations: expectedDonations ? Number(expectedDonations) : 0,
     availableFacilities: availableFacilities?.trim(),
     additionalNotes: additionalNotes?.trim(),
     isAuthorizedRepresentative: Boolean(isAuthorizedRepresentative),
@@ -279,6 +295,7 @@ export const createCampRequest = async (req: AuthenticatedRequest, res: Response
   };
 
   db.campRequests.unshift(newRequest);
+  db.saveSnapshot();
 
   res.status(201).json({
     success: true,
@@ -359,6 +376,8 @@ export const registerForCamp = async (req: AuthenticatedRequest, res: Response) 
     link: '/donor/camps'
   });
 
+  db.saveSnapshot();
+
   res.json({
     success: true,
     message: `Successfully registered for ${camp.title}! SMS & Email reminder scheduled.`,
@@ -382,6 +401,8 @@ export const cancelCampRegistration = async (req: AuthenticatedRequest, res: Res
   if (camp && camp.registeredCount > 0) {
     camp.registeredCount -= 1;
   }
+
+  db.saveSnapshot();
 
   res.json({ success: true, message: 'Camp registration cancelled successfully.' });
 };
@@ -702,6 +723,103 @@ export const getDigitalPass = async (req: AuthenticatedRequest, res: Response) =
       issuedAt: new Date().toISOString(),
       passNotice: 'Digital identification and check-in aid. Must be presented with official photo ID at donation center.'
     }
+  });
+};
+
+/**
+ * Nearby Hospital Discovery for Authenticated Donors
+ * Uses donor's saved coordinates or client-supplied coordinates,
+ * queries actual persisted hospital records, filters out unconfigured/invalid ones,
+ * calculates Haversine distance, and sorts nearest-first.
+ */
+export const getNearbyHospitals = async (req: AuthenticatedRequest, res: Response) => {
+  await safeSupabaseSync();
+
+  const donorId = req.user?.id;
+  const donor = db.donors.find(d => d.id === donorId);
+  if (!donor) {
+    return res.status(404).json({ success: false, error: 'Donor profile not found' });
+  }
+
+  // Obtain coordinates: from query params if provided, or from saved donor profile
+  let donorLat: number | undefined;
+  let donorLng: number | undefined;
+
+  const { lat, lng, radius } = req.query;
+
+  if (lat !== undefined && lng !== undefined && lat !== '' && lng !== '') {
+    const coordParsed = parseCoordinates(lat, lng);
+    if (coordParsed.error) {
+      return res.status(400).json({ success: false, error: coordParsed.error });
+    }
+    donorLat = coordParsed.lat;
+    donorLng = coordParsed.lng;
+  } else if (isValidCoordinate(donor.latitude, donor.longitude)) {
+    donorLat = donor.latitude;
+    donorLng = donor.longitude;
+  }
+
+  // If no coordinates are available from query or profile:
+  if (donorLat === undefined || donorLng === undefined) {
+    return res.json({
+      success: true,
+      donorLocationMissing: true,
+      message: 'Donor location is not configured. Please add your location in My Profile or allow browser geolocation to discover nearby hospitals.',
+      hospitals: [],
+      totalFound: 0
+    });
+  }
+
+  // Configurable search radius (default to donor's travelRadiusKm, or 50 km)
+  let maxRadiusKm = donor.travelRadiusKm || 50;
+  if (radius && radius !== 'all') {
+    const numRadius = Number(radius);
+    if (Number.isFinite(numRadius) && numRadius > 0) {
+      maxRadiusKm = numRadius;
+    }
+  }
+
+  // Filter persisted hospital records with valid coordinates
+  const nearbyHospitals: any[] = [];
+
+  db.hospitals.forEach(h => {
+    if (!isValidCoordinate(h.latitude, h.longitude)) {
+      return; // Skip hospitals without valid coordinates
+    }
+
+    const dist = calcHaversineKm(donorLat!, donorLng!, h.latitude!, h.longitude!);
+
+    if (radius === 'all' || dist <= maxRadiusKm) {
+      nearbyHospitals.push({
+        id: h.id,
+        name: h.name || h.hospitalName,
+        hospitalName: h.hospitalName || h.name,
+        licenseId: h.licenseId,
+        verificationStatus: h.verificationStatus || 'Pending Verification',
+        contactPerson: h.contactPerson,
+        phone: h.phone,
+        emergencyPhone: h.emergencyPhone,
+        address: h.address,
+        city: h.city,
+        state: h.state,
+        postalCode: h.postalCode,
+        latitude: h.latitude,
+        longitude: h.longitude,
+        distanceKm: dist
+      });
+    }
+  });
+
+  // Sort results nearest first
+  nearbyHospitals.sort((a, b) => a.distanceKm - b.distanceKm);
+
+  return res.json({
+    success: true,
+    donorLocationMissing: false,
+    donorCoordinates: { lat: donorLat, lng: donorLng },
+    radiusKm: radius === 'all' ? null : maxRadiusKm,
+    totalFound: nearbyHospitals.length,
+    hospitals: nearbyHospitals
   });
 };
 

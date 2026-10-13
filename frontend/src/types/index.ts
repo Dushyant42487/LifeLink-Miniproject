@@ -96,6 +96,9 @@ export interface User {
   address?: string;
   city?: string;
   state?: string;
+  postalCode?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface DonorProfile extends User {
@@ -103,6 +106,9 @@ export interface DonorProfile extends User {
   bloodGroup: BloodGroup;
   dob: string;
   gender: string;
+  postalCode?: string;
+  latitude?: number;
+  longitude?: number;
   emergencyContact: {
     name: string;
     phone: string;
@@ -119,6 +125,39 @@ export interface DonorProfile extends User {
   bloodGroupProofDocUrl?: string;
   travelRadiusKm?: number;
   pauseInvitations?: boolean;
+}
+
+export interface HospitalProfile extends User {
+  role: 'hospital';
+  hospitalName: string;
+  licenseId: string;
+  verificationStatus?: 'Pending Verification' | 'Verified' | 'Rejected';
+  contactPerson?: string;
+  emergencyPhone?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  latitude?: number;
+  longitude?: number;
+}
+
+export interface NearbyHospital {
+  id: string;
+  name: string;
+  hospitalName: string;
+  licenseId?: string;
+  verificationStatus?: string;
+  contactPerson?: string;
+  phone?: string;
+  emergencyPhone?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  latitude?: number;
+  longitude?: number;
+  distanceKm: number;
 }
 
 export interface BloodUnit {

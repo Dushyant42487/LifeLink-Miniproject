@@ -24,7 +24,7 @@ export const HospitalRequestsPage: React.FC = () => {
 
   // Phase 5D: Receipt confirmation & Discrepancy reporting state
   const [showReceiptModal, setShowReceiptModal] = useState(false);
-  const [receiptNotes, setReceiptNotes] = useState('Physical packs inspected. Cold-chain indicator verified in range.');
+  const [receiptNotes, setReceiptNotes] = useState('');
   const [confirmingReceipt, setConfirmingReceipt] = useState(false);
 
   const [showDiscrepancyModal, setShowDiscrepancyModal] = useState(false);

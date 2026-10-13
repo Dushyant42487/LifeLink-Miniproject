@@ -74,17 +74,7 @@ export const getPublicStats = async (req: Request, res: Response) => {
 
 export const getPublicAvailability = async (req: Request, res: Response) => {
 
-  // Sync with Supabase (Minimal Migration)
-  const { data: __bu } = await supabase.from('blood_units').select('*');
-  if (__bu) db.bloodUnits = __bu;
-  const { data: __br } = await supabase.from('blood_requests').select('*');
-  if (__br) db.bloodRequests = __br;
-  const { data: __don } = await supabase.from('donors').select('*');
-  if (__don) db.donors = __don;
-  const { data: __hosp } = await supabase.from('hospitals').select('*');
-  if (__hosp) db.hospitals = __hosp;
-  const { data: __bb } = await supabase.from('blood_banks').select('*');
-  if (__bb) db.bloodBanks = __bb;
+  await safeSupabaseSync();
 
   const { bloodGroup } = req.query;
   const units = getActiveAvailableUnits(bloodGroup ? String(bloodGroup) : undefined);

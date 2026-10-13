@@ -29,6 +29,10 @@ import {
   DispatchUnitItem
 } from './types';
 import bcrypt from 'bcryptjs';
+import fs from 'fs';
+import path from 'path';
+
+const SNAPSHOT_FILE = path.resolve(__dirname, '../../data/datastore.json');
 
 class DataStore {
   donors: DonorProfile[] = [];
@@ -54,15 +58,90 @@ class DataStore {
   coldStorageAlarms: ColdStorageAlarm[] = [];
   bloodDispatches: BloodDispatch[] = [];
 
-
   constructor() {
     if (process.env.SEED_DEV_FIXTURES === 'true') {
       this.seedInitialData();
+    } else {
+      this.loadSnapshot();
+    }
+  }
+
+  public loadSnapshot(): boolean {
+    try {
+      if (fs.existsSync(SNAPSHOT_FILE)) {
+        const raw = fs.readFileSync(SNAPSHOT_FILE, 'utf-8');
+        const data = JSON.parse(raw);
+        if (data && typeof data === 'object') {
+          this.donors = data.donors || [];
+          this.hospitals = data.hospitals || [];
+          this.bloodBanks = data.bloodBanks || [];
+          this.bloodUnits = data.bloodUnits || [];
+          this.testingRecords = data.testingRecords || [];
+          this.bloodRequests = data.bloodRequests || [];
+          this.patientSamples = data.patientSamples || [];
+          this.requestMessages = data.requestMessages || [];
+          this.donationCamps = data.donationCamps || [];
+          this.emergencyAlerts = data.emergencyAlerts || [];
+          this.emergencyResponses = data.emergencyResponses || [];
+          this.notifications = data.notifications || [];
+          this.campRequests = data.campRequests || [];
+          this.campRegistrations = data.campRegistrations || [];
+          this.hospitalStorageEntries = data.hospitalStorageEntries || [];
+          this.hospitalStorageLocations = data.hospitalStorageLocations || [];
+          this.bloodCollections = data.bloodCollections || [];
+          this.fractionationRecords = data.fractionationRecords || [];
+          this.coldStorageEquipment = data.coldStorageEquipment || [];
+          this.temperatureReadings = data.temperatureReadings || [];
+          this.coldStorageAlarms = data.coldStorageAlarms || [];
+          this.bloodDispatches = data.bloodDispatches || [];
+          return true;
+        }
+      }
+    } catch (err) {
+      console.warn('[DataStore] Failed to load snapshot file:', err);
+    }
+    return false;
+  }
+
+  public saveSnapshot() {
+    try {
+      const dir = path.dirname(SNAPSHOT_FILE);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      const data = {
+        donors: this.donors,
+        hospitals: this.hospitals,
+        bloodBanks: this.bloodBanks,
+        bloodUnits: this.bloodUnits,
+        testingRecords: this.testingRecords,
+        bloodRequests: this.bloodRequests,
+        patientSamples: this.patientSamples,
+        requestMessages: this.requestMessages,
+        donationCamps: this.donationCamps,
+        emergencyAlerts: this.emergencyAlerts,
+        emergencyResponses: this.emergencyResponses,
+        notifications: this.notifications,
+        campRequests: this.campRequests,
+        campRegistrations: this.campRegistrations,
+        hospitalStorageEntries: this.hospitalStorageEntries,
+        hospitalStorageLocations: this.hospitalStorageLocations,
+        bloodCollections: this.bloodCollections,
+        fractionationRecords: this.fractionationRecords,
+        coldStorageEquipment: this.coldStorageEquipment,
+        temperatureReadings: this.temperatureReadings,
+        coldStorageAlarms: this.coldStorageAlarms,
+        bloodDispatches: this.bloodDispatches
+      };
+      fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(data, null, 2), 'utf-8');
+    } catch (err) {
+      console.warn('[DataStore] Failed to write snapshot file:', err);
     }
   }
 
   public seedTestFixtures() {
     this.seedInitialData();
+    this.saveSnapshot();
   }
 
   public clearAllData() {
@@ -88,6 +167,14 @@ class DataStore {
     this.temperatureReadings = [];
     this.coldStorageAlarms = [];
     this.bloodDispatches = [];
+
+    try {
+      if (fs.existsSync(SNAPSHOT_FILE)) {
+        fs.unlinkSync(SNAPSHOT_FILE);
+      }
+    } catch {
+      // Ignore unlink errors
+    }
   }
 
   public getRecordCounts() {

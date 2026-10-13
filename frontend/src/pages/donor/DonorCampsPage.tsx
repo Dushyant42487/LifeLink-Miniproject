@@ -122,14 +122,14 @@ export const DonorCampsPage: React.FC = () => {
   const [organizerName, setOrganizerName] = useState(user?.name || '');
   const [organizerEmail, setOrganizerEmail] = useState(user?.email || '');
   const [organizerPhone, setOrganizerPhone] = useState(user?.phone || '');
-  const [organizerRole, setOrganizerRole] = useState('Event Coordinator');
+  const [organizerRole, setOrganizerRole] = useState('');
 
   const [proposedDate, setProposedDate] = useState('');
-  const [preferredTimeSlot, setPreferredTimeSlot] = useState('09:00 AM - 04:00 PM');
+  const [preferredTimeSlot, setPreferredTimeSlot] = useState('');
   const [venueAddress, setVenueAddress] = useState('');
-  const [city, setCity] = useState(user?.city || 'Metro City');
+  const [city, setCity] = useState(user?.city || '');
   const [postalCode, setPostalCode] = useState('');
-  const [estimatedParticipants, setEstimatedParticipants] = useState('50');
+  const [estimatedParticipants, setEstimatedParticipants] = useState('');
   const [expectedDonations, setExpectedDonations] = useState('');
   const [availableFacilities, setAvailableFacilities] = useState('');
   const [additionalNotes, setAdditionalNotes] = useState('');

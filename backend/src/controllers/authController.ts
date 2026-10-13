@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken';
 import { db } from '../models/store';
 import { JWT_SECRET, AuthenticatedRequest } from '../middleware/auth';
 import { DonorProfile, HospitalProfile, BloodBankProfile, UserRole } from '../models/types';
+import { parseCoordinates } from '../utils/geo';
 
 export const login = async (req: Request, res: Response) => {
   await safeSupabaseSync();
@@ -86,23 +87,38 @@ export const register = async (req: Request, res: Response) => {
     const createdAt = new Date().toISOString();
 
     if (role === 'donor') {
-      const { name, bloodGroup, dob, gender, phone, address, city, state, emergencyContact, weightKg } = req.body;
+      const { name, bloodGroup, dob, gender, phone, address, city, state, postalCode, emergencyContact, weightKg } = req.body;
+      if (!name || !name.trim()) {
+        return res.status(400).json({ success: false, error: 'Full name is required for donor registration' });
+      }
+
+      let donorCoords: { lat?: number; lng?: number } = {};
+      if (req.body.latitude !== undefined || req.body.longitude !== undefined) {
+        const coordRes = parseCoordinates(req.body.latitude, req.body.longitude);
+        if (coordRes.error) {
+          return res.status(400).json({ success: false, error: coordRes.error });
+        }
+        donorCoords = coordRes;
+      }
       
       const newDonor: DonorProfile = {
         id,
-        email,
+        email: email.trim(),
         passwordHash,
         role: 'donor',
-        name: name || 'Voluntary Donor',
+        name: name.trim(),
         bloodGroup: bloodGroup || 'O+',
-        dob: dob || '1995-01-01',
-        gender: gender || 'Male',
-        phone: phone || '+1 (555) 000-0000',
-        address: address || '123 Main St',
-        city: city || 'Metro City',
-        state: state || 'NY',
-        emergencyContact: emergencyContact || { name: 'Emergency Contact', phone: '+1 (555) 000-9999', relation: 'Family' },
-        weightKg: Number(weightKg) || 70,
+        dob: dob || '',
+        gender: gender || 'Unspecified',
+        phone: phone ? phone.trim() : '',
+        address: address ? address.trim() : '',
+        city: city ? city.trim() : '',
+        state: state ? state.trim() : '',
+        postalCode: postalCode ? String(postalCode).trim() : '',
+        latitude: donorCoords.lat,
+        longitude: donorCoords.lng,
+        emergencyContact: emergencyContact || { name: '', phone: '', relation: '' },
+        weightKg: Number(weightKg) || 0,
         isEligible: true,
         totalDonationsCount: 0,
         totalVolumeMl: 0,
@@ -115,73 +131,98 @@ export const register = async (req: Request, res: Response) => {
       };
 
       db.donors.push(newDonor);
+      db.saveSnapshot();
       const token = jwt.sign({ id, email, role: 'donor', name: newDonor.name }, JWT_SECRET, { expiresIn: '24h' });
       const { passwordHash: _, ...donorData } = newDonor;
-
-    
 
       return res.status(201).json({ success: true, token, user: donorData });
     } 
     
     if (role === 'hospital') {
-      const { hospitalName, licenseId, contactPerson, phone, emergencyPhone, address, city, state } = req.body;
+      const { hospitalName, licenseId, contactPerson, phone, emergencyPhone, address, city, state, postalCode } = req.body;
+      const hospName = (hospitalName || req.body.name || '').trim();
+      if (!hospName) {
+        return res.status(400).json({ success: false, error: 'Hospital name is required' });
+      }
+
+      let hospCoords: { lat?: number; lng?: number } = {};
+      if (req.body.latitude !== undefined || req.body.longitude !== undefined) {
+        const coordRes = parseCoordinates(req.body.latitude, req.body.longitude);
+        if (coordRes.error) {
+          return res.status(400).json({ success: false, error: coordRes.error });
+        }
+        hospCoords = coordRes;
+      }
 
       const newHospital: HospitalProfile = {
         id,
-        email,
+        email: email.trim(),
         passwordHash,
         role: 'hospital',
-        name: hospitalName || 'General Hospital',
-        hospitalName: hospitalName || 'General Hospital',
-        licenseId: licenseId || `LIC-${Date.now()}`,
+        name: hospName,
+        hospitalName: hospName,
+        licenseId: (licenseId || req.body.registrationId || '').trim(),
         verificationStatus: 'Pending Verification',
-        contactPerson: contactPerson || 'Duty Officer',
-        phone: phone || '+1 (555) 000-1111',
-        emergencyPhone: emergencyPhone || '+1 (555) 911-0000',
-        address: address || '456 Care Blvd',
-        city: city || 'Metro City',
-        state: state || 'NY',
-        latitude: 40.7128,
-        longitude: -74.0060,
+        contactPerson: contactPerson ? contactPerson.trim() : '',
+        phone: phone ? phone.trim() : '',
+        emergencyPhone: emergencyPhone ? emergencyPhone.trim() : '',
+        address: address ? address.trim() : '',
+        city: city ? city.trim() : '',
+        state: state ? state.trim() : '',
+        postalCode: postalCode ? String(postalCode).trim() : '',
+        latitude: hospCoords.lat,
+        longitude: hospCoords.lng,
         createdAt
       };
 
       db.hospitals.push(newHospital);
+      db.saveSnapshot();
       const token = jwt.sign({ id, email, role: 'hospital', name: newHospital.hospitalName }, JWT_SECRET, { expiresIn: '24h' });
       const { passwordHash: _, ...hospData } = newHospital;
-
-    
 
       return res.status(201).json({ success: true, token, user: hospData });
     }
 
     if (role === 'blood_bank') {
-      const { bloodBankName, registrationId, contactPerson, phone, emergencyPhone, address, city, state } = req.body;
+      const { bloodBankName, registrationId, contactPerson, phone, emergencyPhone, address, city, state, postalCode } = req.body;
+      const bankName = (bloodBankName || req.body.name || '').trim();
+      if (!bankName) {
+        return res.status(400).json({ success: false, error: 'Blood bank name is required' });
+      }
+
+      let bbCoords: { lat?: number; lng?: number } = {};
+      if (req.body.latitude !== undefined || req.body.longitude !== undefined) {
+        const coordRes = parseCoordinates(req.body.latitude, req.body.longitude);
+        if (coordRes.error) {
+          return res.status(400).json({ success: false, error: coordRes.error });
+        }
+        bbCoords = coordRes;
+      }
 
       const newBloodBank: BloodBankProfile = {
         id,
-        email,
+        email: email.trim(),
         passwordHash,
         role: 'blood_bank',
-        name: bloodBankName || 'Regional Blood Center',
-        bloodBankName: bloodBankName || 'Regional Blood Center',
-        registrationId: registrationId || `BB-LIC-${Date.now()}`,
-        contactPerson: contactPerson || 'Lab Director',
-        phone: phone || '+1 (555) 000-2222',
-        emergencyPhone: emergencyPhone || '+1 (555) 999-0000',
-        address: address || '789 Life St',
-        city: city || 'Metro City',
-        state: state || 'NY',
-        latitude: 40.7306,
-        longitude: -73.9352,
+        name: bankName,
+        bloodBankName: bankName,
+        registrationId: (registrationId || req.body.licenseId || '').trim(),
+        contactPerson: contactPerson ? contactPerson.trim() : '',
+        phone: phone ? phone.trim() : '',
+        emergencyPhone: emergencyPhone ? emergencyPhone.trim() : '',
+        address: address ? address.trim() : '',
+        city: city ? city.trim() : '',
+        state: state ? state.trim() : '',
+        postalCode: postalCode ? String(postalCode).trim() : '',
+        latitude: bbCoords.lat,
+        longitude: bbCoords.lng,
         createdAt
       };
 
       db.bloodBanks.push(newBloodBank);
+      db.saveSnapshot();
       const token = jwt.sign({ id, email, role: 'blood_bank', name: newBloodBank.bloodBankName }, JWT_SECRET, { expiresIn: '24h' });
       const { passwordHash: _, ...bbData } = newBloodBank;
-
-    
 
       return res.status(201).json({ success: true, token, user: bbData });
     }

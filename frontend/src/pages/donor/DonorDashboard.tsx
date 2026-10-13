@@ -20,7 +20,8 @@ import {
   Award,
   HeartHandshake,
   UserCheck,
-  Share2
+  Share2,
+  MapPin
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { CampRequest } from '../../types';
@@ -690,6 +691,29 @@ export const DonorDashboard: React.FC = () => {
               className="w-full mt-4 py-2.5 text-center rounded-xl text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors"
             >
               Explore Camps & RSVP
+            </Link>
+          </div>
+
+          {/* Nearby Partner Hospitals Discovery Card */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center space-x-2">
+                <Building2 className="w-4 h-4 text-rose-600" />
+                <h3 className="font-bold text-sm text-slate-900">Nearby Hospitals</h3>
+              </div>
+              <Link to="/donor/hospitals" className="text-xs text-rose-600 font-semibold hover:underline">
+                View Map
+              </Link>
+            </div>
+            <p className="text-xs text-slate-500 mb-3 leading-relaxed">
+              Find verified healthcare institutions and blood transfusion centers near your location, ordered by geographic distance.
+            </p>
+            <Link
+              to="/donor/hospitals"
+              className="w-full py-2.5 text-center rounded-xl text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 transition-colors flex items-center justify-center space-x-1.5"
+            >
+              <MapPin className="w-3.5 h-3.5" />
+              <span>Discover Nearby Hospitals</span>
             </Link>
           </div>
 

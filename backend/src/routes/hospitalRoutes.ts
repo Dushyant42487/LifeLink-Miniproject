@@ -16,7 +16,9 @@ import {
   deleteHospitalStorageEntry,
   confirmHospitalReceipt,
   reportHospitalDiscrepancy,
-  getHospitalRequestDispatch
+  getHospitalRequestDispatch,
+  getHospitalProfile,
+  updateHospitalProfile
 } from '../controllers/hospitalController';
 import { authenticateToken, optionalAuthenticateToken, requireRole } from '../middleware/auth';
 
@@ -29,6 +31,8 @@ router.get('/search-blood', optionalAuthenticateToken, searchBloodAvailability);
 router.use(authenticateToken);
 router.use(requireRole(['hospital', 'blood_bank']));
 
+router.get('/profile', getHospitalProfile);
+router.put('/profile', updateHospitalProfile);
 router.get('/dashboard', getHospitalDashboard);
 router.get('/logistics', getHospitalLogistics);
 router.post('/requests', createBloodRequest);

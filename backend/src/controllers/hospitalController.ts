@@ -3,6 +3,8 @@ import { Response } from 'express';
 import { db } from '../models/store';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { BloodRequest, PatientSample, RequestMessage, BloodGroup, BloodComponent, HospitalStorageEntry, StorageEntryStatus } from '../models/types';
+import { isValidCoordinate, parseCoordinates, calcHaversineKm } from '../utils/geo';
+export { calcHaversineKm };
 
 // Authoritative calculation of reserved units strictly scoped to active hospital requisitions
 export function calculateReservedUnits(
@@ -63,6 +65,8 @@ export function calculateReservedUnits(
   return uniqueReservedUnitIds.size + additionalVirtualReserved;
 }
 
+
+
 export const getHospitalDashboard = async (req: AuthenticatedRequest, res: Response) => {
   await safeSupabaseSync();
 
@@ -73,10 +77,10 @@ export const getHospitalDashboard = async (req: AuthenticatedRequest, res: Respo
 
   const hosp = db.hospitals.find(h => h.id === hospitalId) || {
     id: hospitalId,
-    hospitalName: req.user?.name || 'Verified Hospital',
-    licenseId: 'HOSP-VERIFIED',
-    verificationStatus: 'Verified',
-    city: 'Metro City'
+    hospitalName: req.user?.name || 'Hospital',
+    licenseId: '',
+    verificationStatus: 'Pending Verification',
+    city: ''
   };
 
   // Authoritative collection of requests strictly scoped to authenticated hospital
@@ -98,10 +102,10 @@ export const getHospitalDashboard = async (req: AuthenticatedRequest, res: Respo
     s => s.hospitalId === hospitalId && (s.status === 'Received' || s.status === 'In Verification')
   ).length;
 
-  const hospName = (hosp as any).hospitalName || (hosp as any).name || 'Verified Hospital';
-  const hospLicense = (hosp as any).licenseId || 'HOSP-VERIFIED';
-  const hospStatus = (hosp as any).verificationStatus || 'Verified';
-  const hospCity = (hosp as any).city || 'Metro City';
+  const hospName = (hosp as any).hospitalName || (hosp as any).name || req.user?.name || 'Hospital';
+  const hospLicense = (hosp as any).licenseId || '';
+  const hospStatus = (hosp as any).verificationStatus || 'Pending Verification';
+  const hospCity = (hosp as any).city || '';
 
   res.json({
     success: true,
@@ -111,9 +115,9 @@ export const getHospitalDashboard = async (req: AuthenticatedRequest, res: Respo
       licenseId: hospLicense,
       verificationStatus: hospStatus,
       city: hospCity,
-      address: (hosp as any).address || '100 Hospital Plaza, Midtown',
-      latitude: (hosp as any).latitude || 40.7484,
-      longitude: (hosp as any).longitude || -73.9857
+      address: (hosp as any).address || '',
+      latitude: (hosp as any).latitude,
+      longitude: (hosp as any).longitude
     },
     parLevelMonitoring: {
       configured: false,
@@ -170,24 +174,26 @@ export const searchBloodAvailability = async (req: AuthenticatedRequest, res: Re
     return diff !== 0 ? diff : new Date(a.collectionDate).getTime() - new Date(b.collectionDate).getTime();
   });
 
-  // Fixed simulated distances per blood bank for deterministic UI presentation
-  const bankDistances: Record<string, number> = {
-    'bb-1': 2.4,
-    'bb-2': 5.8
-  };
+  const hosp = db.hospitals.find(h => h.id === req.user?.id);
+  const hospLat = hosp?.latitude;
+  const hospLng = hosp?.longitude;
 
   // Aggregate by Blood Bank
   const resultsByBank: Record<string, any> = {};
 
   db.bloodBanks.forEach(bb => {
+    const hasBothCoords = typeof hospLat === 'number' && typeof hospLng === 'number' && hospLat !== 0 && hospLng !== 0 &&
+                          typeof bb.latitude === 'number' && typeof bb.longitude === 'number' && bb.latitude !== 0 && bb.longitude !== 0;
+    const distanceKm = hasBothCoords ? calcHaversineKm(hospLat!, hospLng!, bb.latitude!, bb.longitude!) : null;
+
     resultsByBank[bb.id] = {
       bloodBankId: bb.id,
       bloodBankName: bb.bloodBankName,
-      address: `${bb.address}, ${bb.city}`,
-      emergencyPhone: bb.emergencyPhone,
+      address: bb.address && bb.city ? `${bb.address}, ${bb.city}` : (bb.address || bb.city || ''),
+      emergencyPhone: bb.emergencyPhone || bb.phone || '',
       latitude: bb.latitude,
       longitude: bb.longitude,
-      distanceKm: bankDistances[bb.id] || 3.5,
+      distanceKm,
       lastUpdated: 'Live Regional Link',
       units: []
     };
@@ -334,7 +340,7 @@ export const createBloodRequest = async (req: AuthenticatedRequest, res: Respons
   }
 
   const now = new Date().toISOString();
-  const hospName = (hosp as any).hospitalName || (hosp as any).name || 'Verified Hospital';
+  const hospName = (hosp as any).hospitalName || (hosp as any).name || req.user?.name || 'Hospital';
 
   const newRequest: BloodRequest = {
     id: reqId,
@@ -348,7 +354,7 @@ export const createBloodRequest = async (req: AuthenticatedRequest, res: Respons
     fulfilledUnits: 0,
     urgency: urgency || 'Routine',
     patientReferenceId: normalizedPatientRef,
-    department: department || 'General Ward',
+    department: department ? department.trim() : 'General Ward',
     requiredByDate: requiredByDate || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     status: targetUnit ? 'Reserved' : 'Pending',
     assignedUnitIds: assignedUnits,
@@ -387,6 +393,8 @@ export const createBloodRequest = async (req: AuthenticatedRequest, res: Respons
       link: '/blood-bank/hospital-requests'
     });
   }
+
+  db.saveSnapshot();
 
   res.status(201).json({
     success: true,
@@ -650,27 +658,15 @@ export const getHospitalLogistics = async (req: AuthenticatedRequest, res: Respo
 
   const hosp = db.hospitals.find(h => h.id === hospitalId) || {
     id: hospitalId,
-    hospitalName: req.user?.name || 'Verified Hospital',
-    address: '100 Hospital Plaza, Midtown',
-    city: 'Metro City',
-    latitude: 40.7484,
-    longitude: -73.9857
+    hospitalName: req.user?.name || 'Hospital',
+    address: (req.user as any)?.address || '',
+    city: (req.user as any)?.city || '',
+    latitude: (req.user as any)?.latitude || 0,
+    longitude: (req.user as any)?.longitude || 0
   };
 
-  const hospLat = (hosp as any).latitude || 40.7484;
-  const hospLng = (hosp as any).longitude || -73.9857;
-
-  // Haversine formula calculation strictly from verified facility coordinates
-  const calcHaversineKm = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-    const R = 6371; // Earth radius in km
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-              Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return Math.round(R * c * 10) / 10;
-  };
+  const hospLat = (hosp as any).latitude || 0;
+  const hospLng = (hosp as any).longitude || 0;
 
   // Connected blood banks with verified coordinates and live inventory summary
   const bloodBanks = db.bloodBanks.map(bb => {
@@ -679,9 +675,9 @@ export const getHospitalLogistics = async (req: AuthenticatedRequest, res: Respo
       u.availability === 'Available' && 
       u.testingStatus === 'Passed'
     );
-    const distanceKm = bb.latitude && bb.longitude
-      ? calcHaversineKm(hospLat, hospLng, bb.latitude, bb.longitude)
-      : 3.5;
+    const distanceKm = isValidCoordinate(hospLat, hospLng) && isValidCoordinate(bb.latitude, bb.longitude)
+      ? calcHaversineKm(hospLat, hospLng, bb.latitude!, bb.longitude!)
+      : null;
 
     return {
       bloodBankId: bb.id,
@@ -731,9 +727,9 @@ export const getHospitalLogistics = async (req: AuthenticatedRequest, res: Respo
     success: true,
     facility: {
       id: hosp.id,
-      hospitalName: (hosp as any).hospitalName || (hosp as any).name || 'Verified Hospital',
-      address: (hosp as any).address || '100 Hospital Plaza, Midtown',
-      city: (hosp as any).city || 'Metro City',
+      hospitalName: (hosp as any).hospitalName || (hosp as any).name || req.user?.name || 'Hospital',
+      address: (hosp as any).address || '',
+      city: (hosp as any).city || '',
       latitude: hospLat,
       longitude: hospLng
     },
@@ -1059,6 +1055,8 @@ export const confirmHospitalReceipt = async (req: AuthenticatedRequest, res: Res
     }
   }
 
+  db.saveSnapshot();
+
   res.json({
     success: true,
     message: `Requisition ${request.id} confirmed received and fulfilled.`,
@@ -1176,6 +1174,96 @@ export const getHospitalRequestDispatch = async (req: AuthenticatedRequest, res:
     success: true,
     dispatch,
     request
+  });
+};
+
+/**
+ * Get Hospital Organization Profile & Verified Location
+ */
+export const getHospitalProfile = async (req: AuthenticatedRequest, res: Response) => {
+  await safeSupabaseSync();
+
+  const hospitalId = req.user?.id;
+  if (!hospitalId) {
+    return res.status(401).json({ success: false, error: 'Unauthorized facility' });
+  }
+
+  const hosp = db.hospitals.find(h => h.id === hospitalId);
+  if (!hosp) {
+    return res.status(404).json({ success: false, error: 'Hospital record not found' });
+  }
+
+  const { passwordHash, ...data } = hosp;
+  res.json({ success: true, hospital: data });
+};
+
+/**
+ * Update Hospital Organization Location & Profile
+ * Strictly enforces that only the authenticated hospital staff can update its own facility.
+ */
+export const updateHospitalProfile = async (req: AuthenticatedRequest, res: Response) => {
+  await safeSupabaseSync();
+
+  const hospitalId = req.user?.id;
+  if (!hospitalId) {
+    return res.status(401).json({ success: false, error: 'Unauthorized facility' });
+  }
+
+  const hosp = db.hospitals.find(h => h.id === hospitalId);
+  if (!hosp) {
+    return res.status(404).json({ success: false, error: 'Hospital record not found' });
+  }
+
+  const { 
+    hospitalName, 
+    contactPerson, 
+    phone, 
+    emergencyPhone, 
+    address, 
+    city, 
+    state, 
+    postalCode, 
+    latitude, 
+    longitude 
+  } = req.body;
+
+  if (hospitalName !== undefined && !String(hospitalName).trim()) {
+    return res.status(400).json({ success: false, error: 'Hospital facility name cannot be blank.' });
+  }
+
+  if (latitude !== undefined || longitude !== undefined) {
+    if (latitude === null && longitude === null) {
+      hosp.latitude = undefined;
+      hosp.longitude = undefined;
+    } else {
+      const coordParsed = parseCoordinates(latitude, longitude);
+      if (coordParsed.error) {
+        return res.status(400).json({ success: false, error: coordParsed.error });
+      }
+      hosp.latitude = coordParsed.lat;
+      hosp.longitude = coordParsed.lng;
+    }
+  }
+
+  if (hospitalName !== undefined) {
+    hosp.hospitalName = String(hospitalName).trim();
+    hosp.name = String(hospitalName).trim();
+  }
+  if (contactPerson !== undefined) hosp.contactPerson = String(contactPerson).trim();
+  if (phone !== undefined) hosp.phone = String(phone).trim();
+  if (emergencyPhone !== undefined) hosp.emergencyPhone = String(emergencyPhone).trim();
+  if (address !== undefined) hosp.address = String(address).trim();
+  if (city !== undefined) hosp.city = String(city).trim();
+  if (state !== undefined) hosp.state = String(state).trim();
+  if (postalCode !== undefined) hosp.postalCode = String(postalCode).trim();
+
+  db.saveSnapshot();
+
+  const { passwordHash, ...data } = hosp;
+  res.json({
+    success: true,
+    message: 'Hospital organization profile and location coordinates updated successfully.',
+    hospital: data
   });
 };
 

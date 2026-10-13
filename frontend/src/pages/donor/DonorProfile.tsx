@@ -2,8 +2,11 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { donorApi } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { DigitalDonorPassModal } from '../../components/common/DigitalDonorPassModal';
-import { Save, CheckCircle2, AlertCircle, RefreshCw, User, Phone, MapPin, FileCheck, Bell, Upload, QrCode, ExternalLink, RefreshCcw } from 'lucide-react';
+import { Save, CheckCircle2, AlertCircle, RefreshCw, User, Phone, MapPin, FileCheck, Bell, Upload, QrCode, ExternalLink, RefreshCcw, Navigation, Compass, MapPinOff, Globe } from 'lucide-react';
 import { evaluateProfileCompleteness } from '../../utils/profileCompleteness';
+import { LocationSearchInput, LocationSuggestion } from '../../components/common/LocationSearchInput';
+import { OSMMap } from '../../components/common/OSMMap';
+import { isValidCoordinate, parseCoordinates } from '../../utils/geo';
 
 export const DonorProfile: React.FC = () => {
   const { user } = useAuth();
@@ -17,6 +20,14 @@ export const DonorProfile: React.FC = () => {
   const [address, setAddress] = useState('');
   const [city, setCity] = useState('');
   const [state, setState] = useState('');
+  const [postalCode, setPostalCode] = useState('');
+  const [latitude, setLatitude] = useState<number | null>(null);
+  const [longitude, setLongitude] = useState<number | null>(null);
+  const [latitudeStr, setLatitudeStr] = useState('');
+  const [longitudeStr, setLongitudeStr] = useState('');
+  const [geoLocating, setGeoLocating] = useState(false);
+  const [geoError, setGeoError] = useState<string | null>(null);
+
   const [weightKg, setWeightKg] = useState('70');
   const [travelRadiusKm, setTravelRadiusKm] = useState('25');
   const [pauseInvitations, setPauseInvitations] = useState(false);
@@ -54,6 +65,9 @@ export const DonorProfile: React.FC = () => {
         const addressVal = d.address || '';
         const cityVal = d.city || '';
         const stateVal = d.state || '';
+        const postalCodeVal = d.postalCode || '';
+        const latVal = (d.latitude !== undefined && d.latitude !== null && Number.isFinite(Number(d.latitude))) ? Number(d.latitude) : null;
+        const lngVal = (d.longitude !== undefined && d.longitude !== null && Number.isFinite(Number(d.longitude))) ? Number(d.longitude) : null;
         const weightVal = String(d.weightKg || 70);
         const radiusVal = String(d.travelRadiusKm || 25);
         const pauseVal = Boolean(d.pauseInvitations);
@@ -70,6 +84,12 @@ export const DonorProfile: React.FC = () => {
         setAddress(addressVal);
         setCity(cityVal);
         setState(stateVal);
+        setPostalCode(postalCodeVal);
+        setLatitude(latVal);
+        setLongitude(lngVal);
+        setLatitudeStr(latVal !== null ? String(latVal) : '');
+        setLongitudeStr(lngVal !== null ? String(lngVal) : '');
+
         setWeightKg(weightVal);
         setTravelRadiusKm(radiusVal);
         setPauseInvitations(pauseVal);
@@ -87,6 +107,9 @@ export const DonorProfile: React.FC = () => {
           address: addressVal,
           city: cityVal,
           state: stateVal,
+          postalCode: postalCodeVal,
+          latitude: latVal,
+          longitude: lngVal,
           weightKg: weightVal,
           travelRadiusKm: radiusVal,
           pauseInvitations: pauseVal,
@@ -121,6 +144,9 @@ export const DonorProfile: React.FC = () => {
     address,
     city,
     state,
+    postalCode,
+    latitude,
+    longitude,
     weightKg,
     travelRadiusKm,
     pauseInvitations,
@@ -145,6 +171,77 @@ export const DonorProfile: React.FC = () => {
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [isDirty]);
+
+  // Geolocation & Address Selection Handlers
+  const handleUseCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      setGeoError('Geolocation is not supported by your browser. Please enter coordinates manually.');
+      return;
+    }
+    setGeoLocating(true);
+    setGeoError(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setGeoLocating(false);
+        const lat = Number(pos.coords.latitude.toFixed(6));
+        const lng = Number(pos.coords.longitude.toFixed(6));
+        setLatitude(lat);
+        setLongitude(lng);
+        setLatitudeStr(String(lat));
+        setLongitudeStr(String(lng));
+      },
+      (err) => {
+        setGeoLocating(false);
+        let errorMsg = 'Unable to acquire location.';
+        if (err.code === err.PERMISSION_DENIED) {
+          errorMsg = 'Location permission was denied. You can manually enter your address and coordinates below.';
+        } else if (err.code === err.POSITION_UNAVAILABLE) {
+          errorMsg = 'Location position is unavailable. Please enter coordinates manually.';
+        } else if (err.code === err.TIMEOUT) {
+          errorMsg = 'Location request timed out. Please try again or enter coordinates manually.';
+        }
+        setGeoError(errorMsg);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  };
+
+  const handleSelectLocationSuggestion = (item: LocationSuggestion) => {
+    if (item.address) setAddress(item.address);
+    if (item.city) setCity(item.city);
+    if (item.state) setState(item.state);
+    if (item.lat !== undefined && item.lng !== undefined && isValidCoordinate(item.lat, item.lng)) {
+      const lat = Number(Number(item.lat).toFixed(6));
+      const lng = Number(Number(item.lng).toFixed(6));
+      setLatitude(lat);
+      setLongitude(lng);
+      setLatitudeStr(String(lat));
+      setLongitudeStr(String(lng));
+    }
+  };
+
+  const handleManualCoordChange = (newLatStr: string, newLngStr: string) => {
+    setLatitudeStr(newLatStr);
+    setLongitudeStr(newLngStr);
+    if (newLatStr.trim() === '' && newLngStr.trim() === '') {
+      setLatitude(null);
+      setLongitude(null);
+      return;
+    }
+    const numLat = Number(newLatStr);
+    const numLng = Number(newLngStr);
+    if (isValidCoordinate(numLat, numLng)) {
+      setLatitude(numLat);
+      setLongitude(numLng);
+    }
+  };
+
+  const handleClearCoordinates = () => {
+    setLatitude(null);
+    setLongitude(null);
+    setLatitudeStr('');
+    setLongitudeStr('');
+  };
 
   // Calculate Profile Completeness using centralized evaluator
   const completeness = useMemo(() => {
@@ -186,6 +283,19 @@ export const DonorProfile: React.FC = () => {
       return;
     }
 
+    // Coordinates validation
+    let finalLat: number | null = null;
+    let finalLng: number | null = null;
+    if (latitudeStr.trim() !== '' || longitudeStr.trim() !== '') {
+      const parsed = parseCoordinates(latitudeStr.trim(), longitudeStr.trim());
+      if (parsed.error) {
+        setMsg({ type: 'error', text: parsed.error });
+        return;
+      }
+      finalLat = parsed.lat!;
+      finalLng = parsed.lng!;
+    }
+
     setSaving(true);
 
     const res = await donorApi.updateProfile({
@@ -194,6 +304,9 @@ export const DonorProfile: React.FC = () => {
       address: address.trim(),
       city: city.trim(),
       state: state.trim(),
+      postalCode: postalCode.trim(),
+      latitude: finalLat,
+      longitude: finalLng,
       weightKg: Number(weightKg),
       travelRadiusKm: Number(travelRadiusKm),
       pauseInvitations,
@@ -212,9 +325,36 @@ export const DonorProfile: React.FC = () => {
     setSaving(false);
 
     if (res.success) {
-      setProfile(res.donor);
-      setInitialBaseline(currentFormState); // Update saved baseline
-      setMsg({ type: 'success', text: 'Donor profile and preferences saved successfully!' });
+      const d = res.donor;
+      setProfile(d);
+      const latVal = (d?.latitude !== undefined && d?.latitude !== null) ? Number(d.latitude) : null;
+      const lngVal = (d?.longitude !== undefined && d?.longitude !== null) ? Number(d.longitude) : null;
+      setLatitude(latVal);
+      setLongitude(lngVal);
+      setLatitudeStr(latVal !== null ? String(latVal) : '');
+      setLongitudeStr(lngVal !== null ? String(lngVal) : '');
+
+      const savedState = JSON.stringify({
+        name: d.name || name.trim(),
+        phone: d.phone || phone.trim(),
+        address: d.address || address.trim(),
+        city: d.city || city.trim(),
+        state: d.state || state.trim(),
+        postalCode: d.postalCode || postalCode.trim(),
+        latitude: latVal,
+        longitude: lngVal,
+        weightKg: String(d.weightKg || weightKg),
+        travelRadiusKm: String(d.travelRadiusKm || travelRadiusKm),
+        pauseInvitations: Boolean(d.pauseInvitations),
+        emergName: d.emergencyContact?.name || emergName.trim(),
+        emergPhone: d.emergencyContact?.phone || emergPhone.trim(),
+        emergRelation: d.emergencyContact?.relation || emergRelation,
+        emergAlertsPref,
+        campRemindersPref,
+        eligibilityAlertsPref
+      });
+      setInitialBaseline(savedState);
+      setMsg({ type: 'success', text: 'Donor profile and location saved successfully!' });
     } else {
       setMsg({ type: 'error', text: res.error || 'Failed to update profile.' });
     }
@@ -479,21 +619,112 @@ export const DonorProfile: React.FC = () => {
           </div>
         </div>
 
-        {/* Section 2: Address & Travel Radius */}
+        {/* Section 2: Address, Coordinates & Travel Radius */}
         <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
-          <div className="flex items-center space-x-2 border-b border-slate-100 pb-3">
-            <MapPin className="w-4 h-4 text-rose-600" />
-            <h3 className="font-bold text-sm text-slate-900">Location & Travel Radius Preferences</h3>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+            <div className="flex items-center space-x-2">
+              <MapPin className="w-4 h-4 text-rose-600" />
+              <h3 className="font-bold text-sm text-slate-900">Location & Nearby Hospital Settings</h3>
+            </div>
+            <div>
+              {isValidCoordinate(latitude, longitude) ? (
+                <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold inline-flex items-center space-x-1">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Location Configured ({latitude}, {longitude})</span>
+                </span>
+              ) : (
+                <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 text-xs font-bold inline-flex items-center space-x-1">
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Location Not Configured</span>
+                </span>
+              )}
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="sm:col-span-3">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Street Address</label>
+          {/* Missing Location Guidance Banner */}
+          {!isValidCoordinate(latitude, longitude) && (
+            <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3.5 text-xs text-amber-900 flex items-start space-x-2.5">
+              <Compass className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold">Add your location to discover nearby partner hospitals</p>
+                <p className="text-amber-800 text-[11px] mt-0.5">
+                  You can search an address below to auto-fill coordinates, click <strong>"Use My Current Location"</strong> with browser permission, or type your GPS coordinates manually.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Geolocation Feedback & Actions */}
+          {geoError && (
+            <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-700 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{geoError}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setGeoError(null)}
+                className="text-[11px] font-bold text-rose-600 hover:underline ml-2"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
+          {/* Search Autocomplete & Quick Geolocation Controls */}
+          <div className="space-y-2">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+              <label className="block text-xs font-semibold text-slate-700">
+                Search Address / Locality (Auto-fills location & coordinates)
+              </label>
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={handleUseCurrentLocation}
+                  disabled={geoLocating}
+                  className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold text-xs rounded-xl flex items-center space-x-1.5 cursor-pointer shadow-2xs transition-colors disabled:opacity-50"
+                  title="Acquires your browser coordinates with explicit permission"
+                >
+                  <Navigation className={`w-3.5 h-3.5 ${geoLocating ? 'animate-spin' : ''}`} />
+                  <span>{geoLocating ? 'Locating...' : 'Use My Current Location'}</span>
+                </button>
+                {isValidCoordinate(latitude, longitude) && (
+                  <button
+                    type="button"
+                    onClick={handleClearCoordinates}
+                    className="px-2.5 py-1.5 text-xs text-slate-500 hover:text-rose-600 font-medium hover:underline"
+                  >
+                    Clear Pin
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <LocationSearchInput
+              placeholder="Search street, locality, landmark, or city..."
+              onSelectLocation={handleSelectLocationSuggestion}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Street Address / Locality</label>
               <input
                 type="text"
                 value={address}
                 placeholder="e.g. 100 Maple Street"
                 onChange={(e) => setAddress(e.target.value)}
+                className="w-full px-3.5 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-rose-500 focus:outline-hidden placeholder:text-slate-400 placeholder:italic text-slate-900 font-semibold"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Postal / ZIP Code</label>
+              <input
+                type="text"
+                value={postalCode}
+                placeholder="e.g. 10001"
+                onChange={(e) => setPostalCode(e.target.value)}
                 className="w-full px-3.5 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-rose-500 focus:outline-hidden placeholder:text-slate-400 placeholder:italic text-slate-900 font-semibold"
               />
             </div>
@@ -528,11 +759,70 @@ export const DonorProfile: React.FC = () => {
                 placeholder="e.g. 25"
                 onChange={(e) => setTravelRadiusKm(e.target.value)}
                 min="1"
-                max="100"
+                max="200"
                 className="w-full px-3.5 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-rose-500 focus:outline-hidden placeholder:text-slate-400 placeholder:italic text-slate-900 font-semibold"
               />
-              <span className="text-[10px] text-slate-400 mt-1 block">Maximum travel distance for emergency alerts.</span>
+              <span className="text-[10px] text-slate-400 mt-1 block">Radius for hospital discovery & emergency alerts.</span>
             </div>
+          </div>
+
+          {/* Coordinate Inputs & Fallback */}
+          <div className="bg-slate-50/70 border border-slate-200/80 rounded-xl p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-800 flex items-center space-x-1.5">
+                <Globe className="w-3.5 h-3.5 text-slate-600" />
+                <span>Geographic GPS Coordinates (Required for Distance Calculation)</span>
+              </span>
+              <span className="text-[10px] text-slate-500">Lat: -90 to 90 • Lng: -180 to 180</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">Latitude</label>
+                <input
+                  type="text"
+                  value={latitudeStr}
+                  placeholder="e.g. 40.7128"
+                  onChange={(e) => handleManualCoordChange(e.target.value, longitudeStr)}
+                  className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-rose-500 focus:outline-hidden bg-white text-slate-900 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">Longitude</label>
+                <input
+                  type="text"
+                  value={longitudeStr}
+                  placeholder="e.g. -74.0060"
+                  onChange={(e) => handleManualCoordChange(latitudeStr, e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-rose-500 focus:outline-hidden bg-white text-slate-900 font-mono"
+                />
+              </div>
+            </div>
+
+            {/* Map Preview when coordinates are present */}
+            {isValidCoordinate(latitude, longitude) ? (
+              <div className="mt-3 rounded-xl overflow-hidden border border-slate-200 shadow-2xs">
+                <OSMMap
+                  markers={[{
+                    id: 'saved-donor-location',
+                    lat: latitude!,
+                    lng: longitude!,
+                    title: 'Your Donor Location',
+                    address: address || 'Saved Location',
+                    city: city || undefined,
+                    type: 'user'
+                  }]}
+                  center={[latitude!, longitude!]}
+                  zoom={13}
+                  height="220px"
+                />
+              </div>
+            ) : (
+              <div className="text-[11px] text-slate-500 italic p-2 text-center bg-white rounded-lg border border-dashed border-slate-200">
+                Map preview will appear here once valid coordinates are selected or entered.
+              </div>
+            )}
           </div>
         </div>
 

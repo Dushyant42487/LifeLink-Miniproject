@@ -9,7 +9,6 @@ interface AuthContextType {
   login: (email: string, password: string, role: UserRole) => Promise<{ success: boolean; user?: User; error?: string }>;
   register: (role: UserRole, formData: any) => Promise<{ success: boolean; user?: User; error?: string }>;
   logout: () => void;
-  switchDemoRole: (role: UserRole) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -85,18 +84,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
   };
 
-  // Demo Switcher helper: log in as default demo user for specified role
-  const switchDemoRole = async (role: UserRole) => {
-    setLoading(true);
-    let email = 'alex.mercer@example.com';
-    if (role === 'hospital') email = 'emergency@apellogeneral.org';
-    if (role === 'blood_bank') email = 'central@citybloodbank.org';
-
-    await login(email, 'password123', role);
-  };
-
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, register, logout, switchDemoRole }}>
+    <AuthContext.Provider value={{ user, token, loading, login, register, logout }}>
       {children}
     </AuthContext.Provider>
   );

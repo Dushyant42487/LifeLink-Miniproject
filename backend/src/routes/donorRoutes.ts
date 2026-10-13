@@ -22,7 +22,8 @@ import {
   getDonorCertificate,
   searchLocations,
   savePrescreening,
-  getDigitalPass
+  getDigitalPass,
+  getNearbyHospitals
 } from '../controllers/donorController';
 import { authenticateToken, requireRole } from '../middleware/auth';
 
@@ -32,6 +33,7 @@ router.use(authenticateToken);
 router.use(requireRole(['donor']));
 
 router.get('/location-search', searchLocations);
+router.get('/nearby-hospitals', getNearbyHospitals);
 router.get('/profile', getDonorProfile);
 router.put('/profile', updateDonorProfile);
 router.post('/verify-blood-group', verifyBloodGroup);

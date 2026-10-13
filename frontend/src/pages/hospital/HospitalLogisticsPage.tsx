@@ -54,12 +54,12 @@ export const HospitalLogisticsPage: React.FC = () => {
   }, [user]);
 
   const facility = data?.facility || {
-    id: user?.id || 'hosp-1',
-    hospitalName: (user as any)?.hospitalName || user?.name || 'Apollo General Hospital',
-    address: (user as any)?.address || '100 Hospital Plaza, Midtown',
-    city: (user as any)?.city || 'Metro City',
-    latitude: 40.7484,
-    longitude: -73.9857
+    id: user?.id || '',
+    hospitalName: (user as any)?.hospitalName || user?.name || 'Hospital',
+    address: (user as any)?.address || '',
+    city: (user as any)?.city || '',
+    latitude: (user as any)?.latitude || 0,
+    longitude: (user as any)?.longitude || 0
   };
 
   const bloodBanks: any[] = data?.bloodBanks || [];
