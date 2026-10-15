@@ -61,14 +61,28 @@ export const Sidebar: React.FC = () => {
             </div>
           </div>
 
-          {role === 'donor' && (
-            <div className="flex items-center justify-between pt-2 border-t border-slate-200/80 text-[10px]">
-              <span className="font-bold text-slate-700">Blood Group: <strong className="text-rose-600 font-extrabold text-xs">{user.bloodGroup || 'O+'}</strong></span>
-              <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold border border-emerald-200">
-                {user.verificationStatus || 'Verified'}
-              </span>
-            </div>
-          )}
+          {role === 'donor' && (() => {
+            const status = (user as any).bloodGroupVerificationStatus || user.verificationStatus || 'Unverified';
+            const isVerified = status === 'Verified';
+            const isPending = status === 'Pending Verification';
+            const isRejected = status === 'Rejected';
+            return (
+              <div className="flex items-center justify-between pt-2 border-t border-slate-200/80 text-[10px]">
+                <span className="font-bold text-slate-700">Blood Group: <strong className="text-rose-600 font-extrabold text-xs">{user.bloodGroup || 'O+'}</strong></span>
+                <span className={`px-1.5 py-0.5 rounded font-bold border ${
+                  isVerified 
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                    : isPending
+                    ? 'bg-amber-50 text-amber-700 border-amber-200'
+                    : isRejected
+                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                    : 'bg-slate-100 text-slate-600 border-slate-200'
+                }`}>
+                  {status}
+                </span>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Navigation Sections */}

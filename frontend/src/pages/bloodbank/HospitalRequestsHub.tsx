@@ -3,6 +3,7 @@ import { bloodBankApi } from '../../services/api';
 import { BloodRequest, BloodDispatch, BloodGroup, BloodComponent } from '../../types';
 import { StatusBadge } from '../../components/common/StatusBadge';
 import { useAuth } from '../../contexts/AuthContext';
+import { Link } from 'react-router-dom';
 import { 
   FileText, 
   CheckCircle2, 
@@ -22,7 +23,8 @@ import {
   Clock, 
   Layers, 
   Sparkles,
-  ClipboardList
+  ClipboardList,
+  FlaskConical
 } from 'lucide-react';
 
 export const HospitalRequestsHub: React.FC = () => {
@@ -33,6 +35,7 @@ export const HospitalRequestsHub: React.FC = () => {
   const [requests, setRequests] = useState<BloodRequest[]>([]);
   const [selectedReq, setSelectedReq] = useState<BloodRequest | null>(null);
   const [eligibleUnits, setEligibleUnits] = useState<any[]>([]);
+  const [unitsDiagnostics, setUnitsDiagnostics] = useState<any | null>(null);
   const [selectedUnitIds, setSelectedUnitIds] = useState<string[]>([]);
   const [manualBarcode, setManualBarcode] = useState<string>('');
   const [barcodeError, setBarcodeError] = useState<string | null>(null);
@@ -99,8 +102,10 @@ export const HospitalRequestsHub: React.FC = () => {
     const res = await bloodBankApi.getEligibleUnits(reqId);
     if (res.success && res.units) {
       setEligibleUnits(res.units);
+      setUnitsDiagnostics(res.diagnostics || null);
     } else {
       setEligibleUnits([]);
+      setUnitsDiagnostics(res?.diagnostics || null);
     }
     setLoadingUnits(false);
   };
@@ -766,9 +771,58 @@ export const HospitalRequestsHub: React.FC = () => {
                             <span>Checking laboratory clearance & cold storage...</span>
                           </div>
                         ) : eligibleUnits.length === 0 ? (
-                          <div className="p-4 bg-amber-50 text-amber-800 text-xs rounded-xl border border-amber-200">
-                            No available released units found for {selectedReq.bloodGroup} {selectedReq.component}. Check Emergency Allocation Matrix for clinical alternatives.
-                          </div>
+                          unitsDiagnostics?.pendingTestingCount > 0 ? (
+                            <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 space-y-3">
+                              <div className="flex items-start space-x-3">
+                                <div className="p-2 bg-amber-100 rounded-lg text-amber-700 mt-0.5 shrink-0">
+                                  <FlaskConical className="w-5 h-5" />
+                                </div>
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <h4 className="text-xs font-bold text-amber-900">
+                                      Units Awaiting Laboratory Clearance
+                                    </h4>
+                                    <span className="px-2 py-0.5 text-[10px] font-extrabold rounded-full bg-amber-200 text-amber-900">
+                                      {unitsDiagnostics.pendingTestingCount} in Laboratory Quarantine
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-amber-800 mt-1.5 leading-relaxed">
+                                    {unitsDiagnostics.explanation}
+                                  </p>
+                                  {unitsDiagnostics.pendingTestingUnits?.length > 0 && (
+                                    <div className="mt-2.5 flex flex-wrap gap-1.5">
+                                      {unitsDiagnostics.pendingTestingUnits.map((u: any) => (
+                                        <Link
+                                          key={u.id}
+                                          to={`/blood-bank/testing?unitId=${encodeURIComponent(u.id)}`}
+                                          className="text-[10px] font-mono px-2 py-0.5 bg-white hover:bg-amber-100 text-amber-900 rounded border border-amber-300 font-semibold shadow-sm transition inline-flex items-center gap-1"
+                                          title={`Click to test unit ${u.id}`}
+                                        >
+                                          <span>{u.id}</span>
+                                          <span className="text-[9px] text-amber-600 font-normal">({u.bloodGroup} • Screen &rarr;)</span>
+                                        </Link>
+                                      ))}
+                                    </div>
+                                  )}
+                                  <div className="mt-3">
+                                    <Link
+                                      to={unitsDiagnostics.pendingTestingUnits?.[0]?.id 
+                                        ? `/blood-bank/testing?unitId=${encodeURIComponent(unitsDiagnostics.pendingTestingUnits[0].id)}` 
+                                        : '/blood-bank/testing'}
+                                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-lg shadow-sm transition"
+                                    >
+                                      <FlaskConical className="w-3.5 h-3.5" />
+                                      Go to Laboratory Testing & Clearance &rarr;
+                                    </Link>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="p-4 bg-amber-50 text-amber-800 text-xs rounded-xl border border-amber-200">
+                              {unitsDiagnostics?.explanation || `No available released units found for ${selectedReq.bloodGroup} ${selectedReq.component}. Check Emergency Allocation Matrix for clinical alternatives.`}
+                            </div>
+                          )
                         ) : (
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs max-h-48 overflow-y-auto pr-1">
                             {eligibleUnits.map(unit => {

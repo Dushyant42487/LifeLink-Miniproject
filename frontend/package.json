@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test --test-concurrency=1 src/tests/cleanEndToEndWorkflow.test.mjs src/tests/donorSuite.test.mjs src/tests/hospitalSuite.test.mjs src/tests/bloodBankSuite.test.mjs src/tests/coldStorageSuite.test.mjs src/tests/fulfillmentSuite.test.mjs src/tests/productionHardeningSuite.test.mjs"
+    "test": "node --test --test-concurrency=1 src/tests/donorEligibilityVerification.test.mjs src/tests/cleanEndToEndWorkflow.test.mjs src/tests/donorSuite.test.mjs src/tests/hospitalSuite.test.mjs src/tests/bloodBankSuite.test.mjs src/tests/coldStorageSuite.test.mjs src/tests/fulfillmentSuite.test.mjs src/tests/productionHardeningSuite.test.mjs src/tests/workflowAuditAndRepairs.test.mjs"
   },
   "dependencies": {
     "@types/leaflet": "^1.9.22",

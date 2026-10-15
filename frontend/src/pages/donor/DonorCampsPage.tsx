@@ -81,6 +81,19 @@ export const DonorCampsPage: React.FC = () => {
   const [locationMsg, setLocationMsg] = useState<string | null>(null);
   const [maxRadiusKm, setMaxRadiusKm] = useState<string>('all');
 
+  // Enforce Saved Profile Location as primary priority
+  useEffect(() => {
+    if ((user as any)?.latitude && (user as any)?.longitude && !userLocation) {
+      setUserLocation({
+        lat: Number((user as any).latitude),
+        lng: Number((user as any).longitude)
+      });
+      setLocationMsg(`Sorted by your saved profile location (${(user as any).city || 'Home City'}).`);
+    } else if ((user as any)?.city && selectedCity === 'all') {
+      setSelectedCity((user as any).city);
+    }
+  }, [user]);
+
   const handleLocateMe = () => {
     if (!navigator.geolocation) {
       setLocationMsg('Geolocation is not supported by your browser.');

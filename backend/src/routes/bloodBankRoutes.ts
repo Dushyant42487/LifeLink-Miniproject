@@ -20,6 +20,7 @@ import {
   getCampCollections,
   searchDonors,
   getDonorDetails,
+  verifyDonorEligibility,
   recordBloodCollection,
   getBloodCollections,
   getBloodCollectionById,
@@ -43,7 +44,10 @@ import {
   prepareDispatch,
   confirmDispatch,
   getDispatchSlip,
-  getEmergencyAllocationMatrix
+  getEmergencyAllocationMatrix,
+  getBloodBankCampRequests,
+  acceptCampRequest,
+  rejectCampRequest
 } from '../controllers/bloodBankController';
 import { authenticateToken, requireRole } from '../middleware/auth';
 
@@ -61,6 +65,7 @@ router.post('/inventory/:id/release', releaseBloodUnit);
 router.post('/inventory/:id/issue', issueBloodUnit);
 router.get('/testing', getTestingRecords);
 router.put('/testing/:id', updateTestingStatus);
+router.post('/testing/:id', updateTestingStatus);
 router.get('/expiry', getExpiryMonitoring);
 router.put('/requests/:id/fulfill', fulfillHospitalRequest);
 router.get('/reports', getReports);
@@ -85,9 +90,15 @@ router.put('/camps/:id', updateBloodBankCamp);
 router.post('/camps/:id/cancel', cancelBloodBankCamp);
 router.get('/camps/:id/collections', getCampCollections);
 
+// Organizational Camp Requests Coordination
+router.get('/camp-requests', getBloodBankCampRequests);
+router.post('/camp-requests/:id/accept', acceptCampRequest);
+router.post('/camp-requests/:id/reject', rejectCampRequest);
+
 // Donors & Collections
 router.get('/donors/search', searchDonors);
 router.get('/donors/:id', getDonorDetails);
+router.post('/donors/:id/verify', verifyDonorEligibility);
 router.get('/collections', getBloodCollections);
 router.get('/collections/:id', getBloodCollectionById);
 router.post('/collections', recordBloodCollection);

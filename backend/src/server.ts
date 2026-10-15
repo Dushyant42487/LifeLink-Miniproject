@@ -11,6 +11,7 @@ import bloodBankRoutes from './routes/bloodBankRoutes';
 import hospitalRoutes from './routes/hospitalRoutes';
 import aiRoutes from './routes/aiRoutes';
 import publicRoutes from './routes/publicRoutes';
+import notificationRoutes from './routes/notificationRoutes';
 import testRoutes from './routes/testRoutes';
 import { connectDatabase, supabase, safeSupabaseSync, syncMutationToSupabase } from './models/db';
 import { db } from './models/store';
@@ -69,6 +70,7 @@ app.use('/api/donors', donorRoutes);
 app.use('/api/blood-bank', bloodBankRoutes);
 app.use('/api/hospitals', hospitalRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/notifications', notificationRoutes);
 app.use('/api/public', publicRoutes);
 if (!envConfig.isProduction) {
   app.use('/api/test', testRoutes);

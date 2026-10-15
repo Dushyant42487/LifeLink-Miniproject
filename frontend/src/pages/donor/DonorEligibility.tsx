@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { apiFetch, donorApi } from '../../services/api';
 import { DisclaimerBanner } from '../../components/common/DisclaimerBanner';
 import { UserCheck, Clock, AlertCircle, HeartHandshake, CheckCircle2, ShieldAlert, Check, X, ArrowLeft, ArrowRight } from 'lucide-react';
@@ -79,17 +80,22 @@ export const DonorEligibility: React.FC = () => {
   const wb = eligibilityData?.wholeBlood;
   const plt = eligibilityData?.platelets;
 
+  // Authoritative Verification Status
+  const isVerified = eligibilityData?.isVerified === true || eligibilityData?.verificationStatus === 'Verified';
+  const verificationStatus = eligibilityData?.verificationStatus || (isVerified ? 'Verified' : 'Unverified');
+  const verificationRequired = eligibilityData?.verificationRequired || !isVerified;
+
   // Calculate Whole Blood Progress Safely
   const wbTotalWindow = wb?.coolOffDaysTotal || 56;
   const wbDaysRemaining = typeof wb?.daysRemaining === 'number' ? wb.daysRemaining : 0;
   const wbDaysPassed = Math.max(0, wbTotalWindow - wbDaysRemaining);
-  const wbProgressPercent = wb?.isEligible ? 100 : Math.min(100, Math.max(0, Math.round((wbDaysPassed / wbTotalWindow) * 100)));
+  const wbProgressPercent = !isVerified ? 0 : (wb?.isEligible ? 100 : Math.min(100, Math.max(0, Math.round((wbDaysPassed / wbTotalWindow) * 100))));
 
   // Calculate Platelets Progress Safely
   const pltTotalWindow = plt?.coolOffDaysTotal || 14;
   const pltDaysRemaining = typeof plt?.daysRemaining === 'number' ? plt.daysRemaining : 0;
   const pltDaysPassed = Math.max(0, pltTotalWindow - pltDaysRemaining);
-  const pltProgressPercent = plt?.isEligible ? 100 : Math.min(100, Math.max(0, Math.round((pltDaysPassed / pltTotalWindow) * 100)));
+  const pltProgressPercent = !isVerified ? 0 : (plt?.isEligible ? 100 : Math.min(100, Math.max(0, Math.round((pltDaysPassed / pltTotalWindow) * 100))));
 
   const hasNoPrevDonations = !eligibilityData?.lastDonationDate || eligibilityData?.lastDonationDate === 'No previous recorded donation';
 
@@ -126,36 +132,85 @@ export const DonorEligibility: React.FC = () => {
       <div className={`rounded-3xl p-6 sm:p-7 border text-white shadow-lg ${
         eligibilityData?.isEligible 
           ? 'bg-gradient-to-r from-emerald-950 via-slate-900 to-emerald-900 border-emerald-500/30' 
+          : !isVerified
+          ? 'bg-gradient-to-r from-rose-950 via-slate-900 to-amber-950 border-rose-500/30'
           : 'bg-gradient-to-r from-amber-950 via-slate-900 to-amber-900 border-amber-500/30'
       }`}>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center space-x-4">
             <div className={`w-14 h-14 rounded-2xl flex items-center justify-center font-bold text-2xl shrink-0 shadow-md ${
-              eligibilityData?.isEligible ? 'bg-emerald-500 text-white' : 'bg-amber-500 text-slate-900'
+              eligibilityData?.isEligible 
+                ? 'bg-emerald-500 text-white' 
+                : !isVerified
+                ? 'bg-rose-600 text-white'
+                : 'bg-amber-500 text-slate-900'
             }`}>
-              {eligibilityData?.isEligible ? <CheckCircle2 className="w-8 h-8" /> : <Clock className="w-8 h-8" />}
+              {eligibilityData?.isEligible ? (
+                <CheckCircle2 className="w-8 h-8" />
+              ) : !isVerified ? (
+                <ShieldAlert className="w-8 h-8" />
+              ) : (
+                <Clock className="w-8 h-8" />
+              )}
             </div>
             <div>
               <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-300">Current Readiness Status</span>
               <h2 className="text-2xl font-extrabold text-white">
                 {eligibilityData?.isEligible 
                   ? 'Eligible for Whole Blood Donation' 
+                  : !isVerified
+                  ? (verificationStatus === 'Pending Verification'
+                      ? 'Blood Group Verification Under Review'
+                      : (verificationStatus === 'Rejected' ? 'Verification Proof Rejected' : 'Blood Group Verification Required'))
                   : 'Cool-off Deferral Window Active'}
               </h2>
               <p className="text-xs text-slate-300 mt-0.5">
-                Registered Blood Group: <strong className="text-rose-400 font-bold">{eligibilityData?.bloodGroup || 'O+'}</strong> • Last Recorded Donation: <strong className="text-white">{hasNoPrevDonations ? 'First-time Donor' : eligibilityData?.lastDonationDate}</strong>
+                Registered Blood Group: <strong className="text-rose-400 font-bold">{eligibilityData?.bloodGroup || 'O+'}</strong> • Verification: <strong className={isVerified ? 'text-emerald-400' : 'text-amber-300'}>{verificationStatus}</strong> • Last Recorded Donation: <strong className="text-white">{hasNoPrevDonations ? 'First-time Donor' : eligibilityData?.lastDonationDate}</strong>
               </p>
             </div>
           </div>
 
           {!eligibilityData?.isEligible && (
-            <div className="bg-amber-500/20 border border-amber-500/30 rounded-2xl p-3.5 px-5 text-center shrink-0">
-              <span className="text-[10px] font-extrabold uppercase text-amber-300 block">Remaining Cool-off</span>
-              <span className="text-2xl sm:text-3xl font-black text-amber-400">{wbDaysRemaining} Days</span>
+            <div className="bg-white/10 border border-white/20 rounded-2xl p-3.5 px-5 text-center shrink-0">
+              <span className="text-[10px] font-extrabold uppercase text-slate-300 block">
+                {!isVerified ? 'Verification Status' : 'Remaining Cool-off'}
+              </span>
+              <span className={`text-xl sm:text-2xl font-black ${!isVerified ? 'text-amber-300' : 'text-amber-400'}`}>
+                {!isVerified ? verificationStatus : `${wbDaysRemaining} Days`}
+              </span>
             </div>
           )}
         </div>
       </div>
+
+      {/* Unverified Actionable Warning Callout */}
+      {!isVerified && (
+        <div className={`rounded-2xl p-4.5 border flex items-start space-x-3.5 ${
+          verificationStatus === 'Pending Verification'
+            ? 'bg-amber-50 border-amber-200 text-amber-900'
+            : 'bg-rose-50 border-rose-200 text-rose-900'
+        }`}>
+          <ShieldAlert className="w-5 h-5 shrink-0 mt-0.5 text-rose-600" />
+          <div className="flex-1 text-xs">
+            <h4 className="font-bold text-sm">
+              {verificationStatus === 'Pending Verification'
+                ? 'Your verification documents are awaiting blood bank review'
+                : 'Authorized Blood Group Verification Required Prior to Donation'}
+            </h4>
+            <p className="mt-1 text-slate-600 leading-relaxed">
+              {verificationStatus === 'Pending Verification'
+                ? 'A blood bank medical officer is reviewing your uploaded blood group certificate. Once confirmed, your clinical eligibility countdown will activate.'
+                : 'Before scheduling a blood or platelet donation appointment, medical regulations require authorized verification of your blood group. Please upload a lab report or donor card in your profile.'}
+            </p>
+            <Link
+              to="/donor/profile"
+              className="inline-flex items-center gap-1.5 mt-2.5 font-bold text-xs text-rose-600 hover:text-rose-700 underline"
+            >
+              {verificationStatus === 'Pending Verification' ? 'Check Document Status in Profile' : 'Upload Verification Document Now'} →
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* Component Cool-Off Breakdown (2 Columns) */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -171,9 +226,15 @@ export const DonorEligibility: React.FC = () => {
               <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${
                 wb?.isEligible 
                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                  : !isVerified
+                  ? (verificationStatus === 'Pending Verification' ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-slate-100 text-slate-700 border-slate-300')
                   : 'bg-amber-50 text-amber-700 border-amber-200'
               }`}>
-                {wb?.isEligible ? 'Eligible Now' : `${wbDaysRemaining} Days Left`}
+                {wb?.isEligible 
+                  ? 'Eligible Now' 
+                  : !isVerified
+                  ? (verificationStatus === 'Pending Verification' ? 'Pending Review' : 'Verification Required')
+                  : `${wbDaysRemaining} Days Left`}
               </span>
             </div>
 
@@ -184,7 +245,11 @@ export const DonorEligibility: React.FC = () => {
               </div>
               <div className="flex justify-between py-1 border-b border-slate-100/80">
                 <span>Next Eligible Date:</span>
-                <span className="font-bold text-rose-600">{wb?.nextEligibleDate || 'Eligible Now'}</span>
+                <span className="font-bold text-rose-600">
+                  {!isVerified 
+                    ? (verificationStatus === 'Pending Verification' ? 'Pending Review' : 'Verification Required')
+                    : (wb?.nextEligibleDate || 'Eligible Now')}
+                </span>
               </div>
               <div className="flex justify-between py-1 border-b border-slate-100/80">
                 <span>Physical Clearance:</span>
@@ -197,11 +262,11 @@ export const DonorEligibility: React.FC = () => {
           <div className="pt-2">
             <div className="flex justify-between text-[11px] font-semibold text-slate-500 mb-1.5">
               <span>Cool-off Period Progress</span>
-              <span className="font-bold text-slate-900">{wbProgressPercent}%</span>
+              <span className="font-bold text-slate-900">{!isVerified ? '0% (Verification Required)' : `${wbProgressPercent}%`}</span>
             </div>
             <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden p-0.5 border border-slate-200/80">
               <div 
-                className="h-full bg-rose-600 rounded-full transition-all duration-500"
+                className={`h-full rounded-full transition-all duration-500 ${!isVerified ? 'bg-slate-300' : 'bg-rose-600'}`}
                 style={{ width: `${wbProgressPercent}%` }}
               />
             </div>
@@ -219,9 +284,15 @@ export const DonorEligibility: React.FC = () => {
               <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${
                 plt?.isEligible 
                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                  : !isVerified
+                  ? (verificationStatus === 'Pending Verification' ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-slate-100 text-slate-700 border-slate-300')
                   : 'bg-amber-50 text-amber-700 border-amber-200'
               }`}>
-                {plt?.isEligible ? 'Eligible Now' : `${pltDaysRemaining} Days Left`}
+                {plt?.isEligible 
+                  ? 'Eligible Now' 
+                  : !isVerified
+                  ? (verificationStatus === 'Pending Verification' ? 'Pending Review' : 'Verification Required')
+                  : `${pltDaysRemaining} Days Left`}
               </span>
             </div>
 
@@ -232,7 +303,11 @@ export const DonorEligibility: React.FC = () => {
               </div>
               <div className="flex justify-between py-1 border-b border-slate-100/80">
                 <span>Next Eligible Date:</span>
-                <span className="font-bold text-purple-600">{plt?.nextEligibleDate || 'Eligible Now'}</span>
+                <span className="font-bold text-purple-600">
+                  {!isVerified 
+                    ? (verificationStatus === 'Pending Verification' ? 'Pending Review' : 'Verification Required')
+                    : (plt?.nextEligibleDate || 'Eligible Now')}
+                </span>
               </div>
               <div className="flex justify-between py-1 border-b border-slate-100/80">
                 <span>Physical Clearance:</span>
@@ -245,11 +320,11 @@ export const DonorEligibility: React.FC = () => {
           <div className="pt-2">
             <div className="flex justify-between text-[11px] font-semibold text-slate-500 mb-1.5">
               <span>Cool-off Period Progress</span>
-              <span className="font-bold text-slate-900">{pltProgressPercent}%</span>
+              <span className="font-bold text-slate-900">{!isVerified ? '0% (Verification Required)' : `${pltProgressPercent}%`}</span>
             </div>
             <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden p-0.5 border border-slate-200/80">
               <div 
-                className="h-full bg-purple-600 rounded-full transition-all duration-500"
+                className={`h-full rounded-full transition-all duration-500 ${!isVerified ? 'bg-slate-300' : 'bg-purple-600'}`}
                 style={{ width: `${pltProgressPercent}%` }}
               />
             </div>

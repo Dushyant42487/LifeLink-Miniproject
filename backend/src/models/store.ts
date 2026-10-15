@@ -337,7 +337,7 @@ class DataStore {
     this.donors = names.map((name, index) => {
       const bg = index === 0 ? ('O+' as BloodGroup) : bloodGroupsList[index % bloodGroupsList.length];
       const isEligible = index % 4 !== 0;
-      const daysAgo = (index + 1) * 20;
+      const daysAgo = index === 0 ? 20 : (index % 4 === 0 ? 15 : 60 + index * 5);
       const lastDate = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
       return {
@@ -362,6 +362,11 @@ class DataStore {
         weightKg: 68 + (index % 15),
         isEligible,
         deferralReason: isEligible ? undefined : 'Recent whole blood donation within 56-day cool-off window.',
+        bloodGroupVerificationStatus: 'Verified',
+        verificationStatus: 'Verified',
+        verifiedAt: '2024-01-01T08:00:00Z',
+        verifiedBy: 'bb-1',
+        verifiedByName: 'City Central Blood Bank',
         totalDonationsCount: (index % 5) + 1,
         totalVolumeMl: ((index % 5) + 1) * 450,
         notificationPreferences: {
@@ -387,7 +392,9 @@ class DataStore {
       bbId: string = 'bb-1'
     ) => {
       unitCounter++;
-      const colDate = new Date(now.getTime() - (35 - daysToExpiry) * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const shelfLifeDays = comp === 'RBC' ? 42 : comp === 'Platelets' ? 5 : 365;
+      const daysAgo = Math.max(1, Math.min(60, shelfLifeDays - daysToExpiry));
+      const colDate = new Date(now.getTime() - daysAgo * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
       const expDate = new Date(now.getTime() + daysToExpiry * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
       const unitId = `UNIT-2026-${unitCounter}`;
 

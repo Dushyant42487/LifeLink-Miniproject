@@ -78,8 +78,16 @@ export const DigitalDonorPassModal: React.FC<DigitalDonorPassModalProps> = ({
 
           <div className="text-[10px] text-slate-300 space-y-1 text-center border-t border-slate-700/80 pt-3">
             <p>
-              Verified Donations: <strong className="text-white">{passData.totalDonations || 3}</strong> • Status:{' '}
-              <strong className="text-emerald-400">{passData.verificationStatus}</strong>
+              Verified Donations: <strong className="text-white">{passData.totalDonations !== undefined ? passData.totalDonations : 0}</strong> • Status:{' '}
+              <strong className={
+                passData.verificationStatus === 'Verified' 
+                  ? 'text-emerald-400' 
+                  : passData.verificationStatus === 'Pending Verification'
+                  ? 'text-amber-400'
+                  : passData.verificationStatus === 'Rejected'
+                  ? 'text-rose-400'
+                  : 'text-slate-300'
+              }>{passData.verificationStatus || 'Unverified'}</strong>
             </p>
             <p className="text-[9px] text-slate-400 leading-tight">{passData.passNotice}</p>
           </div>

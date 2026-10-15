@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { db } from '../models/store';
+import { setSyncPaused } from '../models/db';
 
 const router = Router();
 
@@ -9,6 +10,7 @@ router.post('/reset', (req: Request, res: Response) => {
     return res.status(403).json({ success: false, error: 'Test endpoints disabled in production' });
   }
 
+  setSyncPaused(true);
   db.clearAllData();
   return res.json({
     success: true,
@@ -22,6 +24,7 @@ router.post('/seed-fixtures', (req: Request, res: Response) => {
     return res.status(403).json({ success: false, error: 'Test endpoints disabled in production' });
   }
 
+  setSyncPaused(false);
   db.clearAllData();
   db.seedTestFixtures();
   return res.json({

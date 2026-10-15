@@ -91,7 +91,7 @@ export interface User {
   phone?: string;
   hospitalName?: string;
   bloodBankName?: string;
-  verificationStatus?: 'Pending Verification' | 'Verified' | 'Rejected';
+  verificationStatus?: 'Unverified' | 'Pending Verification' | 'Verified' | 'Rejected';
   bloodGroup?: BloodGroup;
   address?: string;
   city?: string;
@@ -116,13 +116,19 @@ export interface DonorProfile extends User {
   };
   lastDonationDate?: string;
   weightKg: number;
+  isEligible?: boolean;
+  deferralReason?: string;
   notificationPreferences?: {
     emergencyAlerts: boolean;
     campReminders: boolean;
     eligibilityAlerts: boolean;
   };
-  bloodGroupVerificationStatus?: 'Unverified' | 'Pending Verification' | 'Verified';
+  bloodGroupVerificationStatus?: 'Unverified' | 'Pending Verification' | 'Verified' | 'Rejected';
   bloodGroupProofDocUrl?: string;
+  verifiedAt?: string;
+  verifiedBy?: string;
+  verifiedByName?: string;
+  rejectionReason?: string;
   travelRadiusKm?: number;
   pauseInvitations?: boolean;
 }
@@ -241,6 +247,12 @@ export interface TestingRecord {
   testedBy: string;
   testingDate: string;
   notes?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  component?: string;
+  volumeMl?: number;
+  storageLocation?: string;
+  expiryDate?: string;
 }
 
 export interface BloodRequest {
@@ -413,6 +425,11 @@ export interface CampRequest {
   additionalNotes?: string;
   isAuthorizedRepresentative: boolean;
   agreedToTerms: boolean;
+  // Partner Blood Bank
+  bloodBankId?: string;
+  bloodBankName?: string;
+  scheduledCampId?: string;
+
   status: CampRequestStatus;
   statusNote?: string;
   createdAt: string;

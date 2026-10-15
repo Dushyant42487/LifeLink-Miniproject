@@ -2,6 +2,7 @@ import '../env';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { db as inMemoryDb } from './store';
 import { BloodGroup, BloodComponent, TestingStatus, AvailabilityStatus, UserRole, RequestUrgency, RequestStatus } from './types';
+import { syncDonorAuthoritativeEligibility } from '../services/donorEligibilityService';
 
 function isValidHttpUrl(urlString?: string): boolean {
   if (!urlString || urlString.startsWith('YOUR_') || urlString.includes('...')) {
@@ -83,9 +84,14 @@ export function sanitizeRecord(tableName: string, record: any): any {
     if (!sanitized.dob) sanitized.dob = '2000-01-01';
     if (!sanitized.gender) sanitized.gender = 'Unspecified';
     if (!sanitized.bloodGroup) sanitized.bloodGroup = 'O+';
-    if (sanitized.isEligible === undefined) sanitized.isEligible = true;
+    if (sanitized.isEligible === undefined) sanitized.isEligible = false;
     if (sanitized.totalDonationsCount === undefined) sanitized.totalDonationsCount = 0;
     if (sanitized.totalVolumeMl === undefined) sanitized.totalVolumeMl = 0;
+  }
+
+  if (tableName === 'blood_banks' || tableName === 'hospitals') {
+    if (sanitized.latitude === undefined || sanitized.latitude === null) sanitized.latitude = 40.7128;
+    if (sanitized.longitude === undefined || sanitized.longitude === null) sanitized.longitude = -74.0060;
   }
 
   if (!sanitized.createdAt) {
@@ -151,8 +157,13 @@ export async function syncMutationToSupabase(
   }
 }
 
+export let isSyncPaused = false;
+export const setSyncPaused = (paused: boolean) => {
+  isSyncPaused = paused;
+};
+
 export const safeSupabaseSync = async () => {
-  if (!isSupabaseReal) return;
+  if (!isSupabaseReal || isSyncPaused) return;
   try {
     const syncPromise = (async () => {
       const [buRes, brRes, donRes, hospRes, bbRes] = await Promise.all([
@@ -163,11 +174,79 @@ export const safeSupabaseSync = async () => {
         supabase.from('blood_banks').select('*')
       ]);
 
-      if (buRes.data && buRes.data.length > 0) inMemoryDb.bloodUnits = buRes.data;
-      if (brRes.data && brRes.data.length > 0) inMemoryDb.bloodRequests = brRes.data;
-      if (donRes.data && donRes.data.length > 0) inMemoryDb.donors = donRes.data;
-      if (hospRes.data && hospRes.data.length > 0) inMemoryDb.hospitals = hospRes.data;
-      if (bbRes.data && bbRes.data.length > 0) inMemoryDb.bloodBanks = bbRes.data;
+      if (donRes.data && donRes.data.length > 0) {
+        for (const remoteDonor of donRes.data) {
+          const idx = inMemoryDb.donors.findIndex(d => d.id === remoteDonor.id);
+          if (idx >= 0) {
+            const local = inMemoryDb.donors[idx];
+            inMemoryDb.donors[idx] = {
+              ...remoteDonor,
+              bloodGroupVerificationStatus: local.bloodGroupVerificationStatus || 'Unverified',
+              verificationStatus: local.verificationStatus || local.bloodGroupVerificationStatus || 'Unverified',
+              verifiedAt: local.verifiedAt,
+              verifiedBy: local.verifiedBy,
+              verifiedByName: local.verifiedByName,
+              proofDocument: (local as any).proofDocument,
+              rejectionReason: local.rejectionReason,
+              weightKg: local.weightKg ?? remoteDonor.weightKg,
+              isEligible: local.isEligible !== undefined ? local.isEligible : remoteDonor.isEligible
+            };
+            syncDonorAuthoritativeEligibility(inMemoryDb.donors[idx]);
+          } else {
+            const newDonor = {
+              ...remoteDonor,
+              bloodGroupVerificationStatus: (remoteDonor as any).bloodGroupVerificationStatus || 'Unverified',
+              verificationStatus: (remoteDonor as any).verificationStatus || 'Unverified'
+            };
+            syncDonorAuthoritativeEligibility(newDonor);
+            inMemoryDb.donors.push(newDonor as any);
+          }
+        }
+      }
+
+      if (hospRes.data && hospRes.data.length > 0) {
+        for (const remoteHosp of hospRes.data) {
+          const idx = inMemoryDb.hospitals.findIndex(h => h.id === remoteHosp.id);
+          if (idx >= 0) {
+            inMemoryDb.hospitals[idx] = { ...remoteHosp, ...inMemoryDb.hospitals[idx] };
+          } else {
+            inMemoryDb.hospitals.push(remoteHosp);
+          }
+        }
+      }
+
+      if (bbRes.data && bbRes.data.length > 0) {
+        for (const remoteBb of bbRes.data) {
+          const idx = inMemoryDb.bloodBanks.findIndex(b => b.id === remoteBb.id);
+          if (idx >= 0) {
+            inMemoryDb.bloodBanks[idx] = { ...remoteBb, ...inMemoryDb.bloodBanks[idx] };
+          } else {
+            inMemoryDb.bloodBanks.push(remoteBb);
+          }
+        }
+      }
+
+      if (buRes.data && buRes.data.length > 0) {
+        for (const remoteUnit of buRes.data) {
+          const idx = inMemoryDb.bloodUnits.findIndex(u => u.id === remoteUnit.id);
+          if (idx >= 0) {
+            inMemoryDb.bloodUnits[idx] = { ...remoteUnit, ...inMemoryDb.bloodUnits[idx] };
+          } else {
+            inMemoryDb.bloodUnits.push(remoteUnit);
+          }
+        }
+      }
+
+      if (brRes.data && brRes.data.length > 0) {
+        for (const remoteReq of brRes.data) {
+          const idx = inMemoryDb.bloodRequests.findIndex(r => r.id === remoteReq.id);
+          if (idx >= 0) {
+            inMemoryDb.bloodRequests[idx] = { ...remoteReq, ...inMemoryDb.bloodRequests[idx] };
+          } else {
+            inMemoryDb.bloodRequests.push(remoteReq);
+          }
+        }
+      }
     })();
 
     const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 5000));

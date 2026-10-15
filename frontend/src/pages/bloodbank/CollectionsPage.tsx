@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { apiFetch } from '../../services/api';
-import { BloodGroup, BloodComponent, BloodCollectionRecord, ComponentFractionationRecord, DonationCamp } from '../../types';
+import { apiFetch, bloodBankApi } from '../../services/api';
+import { BloodGroup, BloodComponent, BloodCollectionRecord, ComponentFractionationRecord, DonationCamp, CampRequest } from '../../types';
+import { StatusBadge } from '../../components/common/StatusBadge';
 import { 
   Syringe, 
   CheckCircle2, 
@@ -24,13 +25,14 @@ import {
   FileText, 
   Activity, 
   ShieldAlert,
-  Info
+  Info,
+  Building2
 } from 'lucide-react';
 
 export const CollectionsPage: React.FC = () => {
   const navigate = useNavigate();
 
-  const [activeTab, setActiveTab] = useState<'phlebotomy' | 'camps' | 'fractionation'>('phlebotomy');
+  const [activeTab, setActiveTab] = useState<'phlebotomy' | 'camps' | 'camp-requests' | 'fractionation'>('phlebotomy');
 
   // ==========================================
   // TAB 1: PHLEBOTOMY LOGGER STATE
@@ -40,6 +42,7 @@ export const CollectionsPage: React.FC = () => {
   const [searchingDonors, setSearchingDonors] = useState(false);
   const [selectedDonor, setSelectedDonor] = useState<any | null>(null);
   const [verifyingDonor, setVerifyingDonor] = useState(false);
+  const [staffVerifying, setStaffVerifying] = useState(false);
 
   const [donorCode, setDonorCode] = useState('');
   const [bloodGroup, setBloodGroup] = useState<BloodGroup>('O-');
@@ -124,6 +127,20 @@ export const CollectionsPage: React.FC = () => {
   const [processingNotes, setProcessingNotes] = useState('');
 
   // ==========================================
+  // TAB 4: CAMP REQUESTS STATE
+  // ==========================================
+  const [campRequests, setCampRequests] = useState<CampRequest[]>([]);
+  const [loadingCampRequests, setLoadingCampRequests] = useState(false);
+  const [campRequestsFilter, setCampRequestsFilter] = useState<'all' | 'Submitted' | 'Approved' | 'Rejected'>('all');
+  const [activeCampRequest, setActiveCampRequest] = useState<CampRequest | null>(null);
+  const [showAcceptCampModal, setShowAcceptCampModal] = useState(false);
+  const [acceptingCampDate, setAcceptingCampDate] = useState('');
+  const [acceptingCampTime, setAcceptingCampTime] = useState('');
+  const [acceptingCampNotes, setAcceptingCampNotes] = useState('');
+  const [processingCampAction, setProcessingCampAction] = useState(false);
+  const [campActionMessage, setCampActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // ==========================================
   // EFFECTS & FETCHERS
   // ==========================================
 
@@ -155,10 +172,78 @@ export const CollectionsPage: React.FC = () => {
   useEffect(() => {
     fetchCamps();
     fetchRecentCollections();
+    fetchCampRequests();
     if (activeTab === 'fractionation') {
       fetchFractionationData();
     }
   }, [activeTab]);
+
+  const fetchCampRequests = async () => {
+    setLoadingCampRequests(true);
+    try {
+      const res = await bloodBankApi.getCampRequests();
+      if (res.success && res.requests) {
+        setCampRequests(res.requests);
+      }
+    } catch {
+      // Ignore
+    } finally {
+      setLoadingCampRequests(false);
+    }
+  };
+
+  const handleOpenAcceptModal = (req: CampRequest) => {
+    setActiveCampRequest(req);
+    setAcceptingCampDate(req.proposedDate);
+    setAcceptingCampTime(req.preferredTimeSlot || '09:00 AM - 05:00 PM');
+    setAcceptingCampNotes('');
+    setShowAcceptCampModal(true);
+  };
+
+  const handleConfirmAcceptCamp = async () => {
+    if (!activeCampRequest) return;
+    setProcessingCampAction(true);
+    setCampActionMessage(null);
+    try {
+      const res = await bloodBankApi.acceptCampRequest(activeCampRequest.id, {
+        scheduledDate: acceptingCampDate,
+        timeSlot: acceptingCampTime,
+        notes: acceptingCampNotes
+      });
+      if (res.success) {
+        setCampActionMessage({ type: 'success', text: `Camp request approved and scheduled successfully!` });
+        setShowAcceptCampModal(false);
+        setActiveCampRequest(null);
+        await Promise.all([fetchCampRequests(), fetchCamps()]);
+      } else {
+        setCampActionMessage({ type: 'error', text: res.error || 'Failed to approve camp request.' });
+      }
+    } catch {
+      setCampActionMessage({ type: 'error', text: 'Server communication error while approving camp request.' });
+    } finally {
+      setProcessingCampAction(false);
+    }
+  };
+
+  const handleRejectCamp = async (req: CampRequest) => {
+    const reason = window.prompt(`Please provide a reason for declining the camp request from ${req.organizationName}:`, 'Logistical or scheduling capacity constraints.');
+    if (reason === null) return;
+    setProcessingCampAction(true);
+    setCampActionMessage(null);
+    try {
+      const res = await bloodBankApi.rejectCampRequest(req.id, { reason });
+      if (res.success) {
+        setCampActionMessage({ type: 'success', text: `Camp request from ${req.organizationName} declined.` });
+        await fetchCampRequests();
+      } else {
+        setCampActionMessage({ type: 'error', text: res.error || 'Failed to decline camp request.' });
+      }
+    } catch {
+      setCampActionMessage({ type: 'error', text: 'Server communication error.' });
+    } finally {
+      setProcessingCampAction(false);
+    }
+  };
 
   const fetchRecentCollections = async () => {
     setLoadingCollections(true);
@@ -578,6 +663,22 @@ export const CollectionsPage: React.FC = () => {
             <span>Mobile Drives</span>
           </button>
           <button
+            onClick={() => setActiveTab('camp-requests')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+              activeTab === 'camp-requests'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Building2 className="w-3.5 h-3.5" />
+            <span>Org Camp Requests</span>
+            {campRequests.filter(r => r.status === 'Submitted').length > 0 && (
+              <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-extrabold bg-rose-500 text-white">
+                {campRequests.filter(r => r.status === 'Submitted').length}
+              </span>
+            )}
+          </button>
+          <button
             onClick={() => setActiveTab('fractionation')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
               activeTab === 'fractionation'
@@ -738,8 +839,8 @@ export const CollectionsPage: React.FC = () => {
                         <span className="px-2 py-0.5 rounded font-extrabold text-[10px] bg-rose-50 text-rose-700 border border-rose-100">
                           {d.bloodGroup}
                         </span>
-                        <div className={`text-[10px] font-semibold mt-0.5 ${d.isEligible === false ? 'text-rose-600' : 'text-emerald-600'}`}>
-                          {d.isEligible === false ? 'Deferred' : 'Eligible'}
+                        <div className={`text-[10px] font-semibold mt-0.5 ${d.isVerified === false ? 'text-amber-600 font-bold' : (d.isEligible === false ? 'text-rose-600' : 'text-emerald-600')}`}>
+                          {d.isVerified === false ? (d.verificationStatus || 'Unverified') : (d.isEligible === false ? 'Deferred' : 'Eligible')}
                         </div>
                       </div>
                     </div>
@@ -770,10 +871,16 @@ export const CollectionsPage: React.FC = () => {
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 border-t border-slate-200/50 text-[11px]">
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-1 border-t border-slate-200/50 text-[11px]">
                     <div>
                       <span className="text-slate-500 block">Blood Group:</span>
                       <strong className="text-slate-900 font-bold">{selectedDonor.bloodGroup}</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block">Verification:</span>
+                      <strong className={selectedDonor.isVerified === false ? 'text-amber-700' : 'text-emerald-700'}>
+                        {selectedDonor.verificationStatus || selectedDonor.bloodGroupVerificationStatus || (selectedDonor.isVerified ? 'Verified' : 'Unverified')}
+                      </strong>
                     </div>
                     <div>
                       <span className="text-slate-500 block">Weight:</span>
@@ -791,7 +898,47 @@ export const CollectionsPage: React.FC = () => {
                     </div>
                   </div>
 
-                  {selectedDonor.isEligible === false && (
+                  {/* Staff Verification Action for Unverified/Pending Donors */}
+                  {selectedDonor.isVerified === false && (
+                    <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-900 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                      <div className="flex items-start space-x-2">
+                        <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-bold text-xs">Donor Verification Required</p>
+                          <p className="text-[11px] text-amber-800">
+                            Donor identity and blood group verification must be confirmed by authorized staff before blood collection.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            setStaffVerifying(true);
+                            const res = await apiFetch(`/blood-bank/donors/${selectedDonor.id}/verify`, {
+                              method: 'POST',
+                              body: JSON.stringify({ status: 'Verified' })
+                            });
+                            if (res.success) {
+                              await handleSelectDonor({ id: selectedDonor.id });
+                            } else {
+                              setCollectionError(res.error || 'Failed to verify donor.');
+                            }
+                          } catch (err: any) {
+                            setCollectionError(err.message || 'Error verifying donor.');
+                          } finally {
+                            setStaffVerifying(false);
+                          }
+                        }}
+                        disabled={staffVerifying}
+                        className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+                      >
+                        {staffVerifying ? 'Verifying...' : 'Approve & Verify Donor'}
+                      </button>
+                    </div>
+                  )}
+
+                  {selectedDonor.isEligible === false && selectedDonor.isVerified !== false && (
                     <div className="p-2 bg-white rounded-lg border border-rose-200 text-rose-700 font-medium text-[11px] flex items-center space-x-1.5">
                       <ShieldAlert className="w-3.5 h-3.5 text-rose-600 shrink-0" />
                       <span><strong>Clinical Alert:</strong> {selectedDonor.deferralReason || 'Donor does not meet standard clinical eligibility criteria.'}</span>
@@ -1249,6 +1396,208 @@ export const CollectionsPage: React.FC = () => {
                   </div>
                 );
               })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* TAB 4: ORGANIZATIONAL CAMP REQUESTS                     */}
+      {/* ======================================================== */}
+      {activeTab === 'camp-requests' && (
+        <div className="space-y-6">
+          {/* Header Notice */}
+          <div className="bg-sky-50/70 border border-sky-200/80 rounded-2xl p-4 text-xs text-sky-900 flex items-start space-x-3">
+            <Building2 className="w-4 h-4 text-sky-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold">Community & Corporate Blood Donation Camp Requests</p>
+              <p className="text-sky-800 text-[11px] mt-0.5">
+                Review and approve incoming blood drive coordination requests submitted by universities, corporate offices, and community organizers.
+                Approving a request automatically schedules a public drive and dispatches in-app confirmation to the organizer.
+              </p>
+            </div>
+          </div>
+
+          {campActionMessage && (
+            <div className={`p-4 rounded-2xl text-xs font-bold flex items-center justify-between border ${
+              campActionMessage.type === 'success' 
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
+                : 'bg-rose-50 text-rose-800 border-rose-200'
+            }`}>
+              <span>{campActionMessage.text}</span>
+              <button onClick={() => setCampActionMessage(null)} className="text-xs hover:underline cursor-pointer">
+                Dismiss
+              </button>
+            </div>
+          )}
+
+          {/* Filter Pills */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-200">
+            <div className="flex items-center space-x-1">
+              {(['all', 'Submitted', 'Approved', 'Rejected'] as const).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setCampRequestsFilter(f)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    campRequestsFilter === f
+                      ? 'bg-blood-50 text-blood-700 border border-blood-200 shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900 border border-transparent'
+                  }`}
+                >
+                  {f === 'all' ? `All Requests (${campRequests.length})` : 
+                   f === 'Submitted' ? `Pending Review (${campRequests.filter(r => r.status === 'Submitted').length})` :
+                   f === 'Approved' ? `Approved (${campRequests.filter(r => r.status === 'Approved').length})` :
+                   `Declined (${campRequests.filter(r => r.status === 'Rejected').length})`}
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={fetchCampRequests}
+              disabled={loadingCampRequests}
+              className="px-3 py-1.5 rounded-xl text-xs font-bold text-slate-600 hover:text-slate-900 border border-slate-200 hover:bg-slate-50 flex items-center space-x-1 cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingCampRequests ? 'animate-spin' : ''}`} />
+              <span>Refresh</span>
+            </button>
+          </div>
+
+          {/* Requests List */}
+          {loadingCampRequests ? (
+            <div className="py-12 text-center text-slate-400 text-xs">
+              <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-blood-600" />
+              <span>Loading camp requests...</span>
+            </div>
+          ) : campRequests.filter(r => campRequestsFilter === 'all' || r.status === campRequestsFilter).length === 0 ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-slate-400 space-y-2">
+              <Building2 className="w-10 h-10 mx-auto text-slate-300 stroke-1" />
+              <p className="font-bold text-slate-700 text-sm">No Camp Requests Found</p>
+              <p className="text-xs">No organizational requests match the selected status filter.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4">
+              {campRequests
+                .filter(r => campRequestsFilter === 'all' || r.status === campRequestsFilter)
+                .map(req => (
+                  <div key={req.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs hover:border-slate-300 transition-all space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                      <div className="flex items-center space-x-2.5">
+                        <div className="w-9 h-9 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center font-bold shrink-0">
+                          <Building2 className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="flex items-center space-x-2">
+                            <h3 className="font-extrabold text-slate-900 text-sm">{req.organizationName}</h3>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
+                              {req.organizationType}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 font-mono mt-0.5">
+                            ID: {req.id} • Submitted: {new Date(req.createdAt).toLocaleDateString()}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-2">
+                        <StatusBadge status={req.status} />
+                      </div>
+                    </div>
+
+                    {/* Details Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                      {/* Organizer */}
+                      <div className="bg-slate-50/70 rounded-xl p-3 space-y-1.5 border border-slate-100">
+                        <p className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider flex items-center gap-1">
+                          <User className="w-3.5 h-3.5 text-slate-500" />
+                          Organizer Contact
+                        </p>
+                        <p className="font-bold text-slate-900">{req.organizerName} {req.organizerRole ? `(${req.organizerRole})` : ''}</p>
+                        <p className="text-slate-600 flex items-center gap-1">
+                          <Phone className="w-3 h-3 text-slate-400" />
+                          {req.organizerPhone}
+                        </p>
+                        <p className="text-slate-500 text-[11px] truncate">{req.organizerEmail}</p>
+                      </div>
+
+                      {/* Logistics */}
+                      <div className="bg-slate-50/70 rounded-xl p-3 space-y-1.5 border border-slate-100">
+                        <p className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider flex items-center gap-1">
+                          <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                          Target Schedule & Venue
+                        </p>
+                        <p className="font-bold text-slate-900">
+                          {req.proposedDate} • {req.preferredTimeSlot || 'Flexible Slot'}
+                        </p>
+                        <p className="text-slate-600 flex items-start gap-1">
+                          <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
+                          <span>{req.venueAddress}, {req.city} {req.postalCode ? `(${req.postalCode})` : ''}</span>
+                        </p>
+                      </div>
+
+                      {/* Scale & Facilities */}
+                      <div className="bg-slate-50/70 rounded-xl p-3 space-y-1.5 border border-slate-100">
+                        <p className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider flex items-center gap-1">
+                          <Users className="w-3.5 h-3.5 text-slate-500" />
+                          Drive Scale & Facilities
+                        </p>
+                        <p className="text-slate-700">
+                          Est. Participants: <span className="font-bold text-slate-900">{req.estimatedParticipants}</span>
+                          {req.expectedDonations ? ` • Target: ${req.expectedDonations} units` : ''}
+                        </p>
+                        {req.availableFacilities && (
+                          <p className="text-slate-500 text-[11px] line-clamp-2">
+                            Facilities: {req.availableFacilities}
+                          </p>
+                        )}
+                        {req.additionalNotes && (
+                          <p className="text-slate-500 text-[11px] italic line-clamp-1">
+                            "{req.additionalNotes}"
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Status Notice or Action Buttons */}
+                    {req.status === 'Submitted' ? (
+                      <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                        <button
+                          type="button"
+                          onClick={() => handleRejectCamp(req)}
+                          disabled={processingCampAction}
+                          className="px-4 py-2 border border-slate-200 rounded-xl text-xs font-bold text-rose-600 hover:bg-rose-50 cursor-pointer transition-all"
+                        >
+                          Decline Request
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenAcceptModal(req)}
+                          disabled={processingCampAction}
+                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center space-x-1.5 cursor-pointer transition-all"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>Accept & Schedule Drive</span>
+                        </button>
+                      </div>
+                    ) : req.status === 'Approved' ? (
+                      <div className="p-2.5 bg-emerald-50 rounded-xl border border-emerald-200 text-emerald-800 text-xs flex items-center justify-between">
+                        <span className="font-bold flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                          Approved & Scheduled with Drive ID: {req.scheduledCampId || 'Active'}
+                        </span>
+                        {req.statusNote && (
+                          <span className="text-[11px] text-emerald-700 italic">
+                            {req.statusNote}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="p-2.5 bg-rose-50 rounded-xl border border-rose-200 text-rose-800 text-xs flex items-center gap-1.5">
+                        <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                        <span>Declined: {req.statusNote || 'Capacity constraints'}</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
             </div>
           )}
         </div>
@@ -2038,6 +2387,98 @@ export const CollectionsPage: React.FC = () => {
                 </div>
               </form>
             )}
+          </div>
+        </div>
+      )}
+      {/* ======================================================== */}
+      {/* MODAL: ACCEPT & SCHEDULE ORGANIZATIONAL CAMP DRIVE       */}
+      {/* ======================================================== */}
+      {showAcceptCampModal && activeCampRequest && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center space-x-2">
+                <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
+                  <CheckCircle2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm">Accept & Schedule Camp Drive</h3>
+                  <p className="text-xs text-slate-500">{activeCampRequest.organizationName}</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowAcceptCampModal(false)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="bg-slate-50 rounded-xl p-3 text-xs text-slate-700 space-y-1">
+              <p><strong className="text-slate-900">Venue:</strong> {activeCampRequest.venueAddress}, {activeCampRequest.city}</p>
+              <p><strong className="text-slate-900">Target Scale:</strong> {activeCampRequest.expectedDonations || activeCampRequest.estimatedParticipants} estimated donors</p>
+              <p><strong className="text-slate-900">Organizer:</strong> {activeCampRequest.organizerName} ({activeCampRequest.organizerPhone})</p>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleConfirmAcceptCamp();
+              }}
+              className="space-y-3 text-xs"
+            >
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Confirmed Drive Date *</label>
+                <input
+                  type="date"
+                  required
+                  value={acceptingCampDate}
+                  onChange={(e) => setAcceptingCampDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Operating Time Slot *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. 09:00 AM - 05:00 PM"
+                  value={acceptingCampTime}
+                  onChange={(e) => setAcceptingCampTime(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Coordination & Phlebotomy Notes (Optional)</label>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. Mobile van dispatched at 08:30 AM. 4 beds and centrifuge equipment assigned."
+                  value={acceptingCampNotes}
+                  onChange={(e) => setAcceptingCampNotes(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl bg-white"
+                />
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowAcceptCampModal(false)}
+                  className="px-4 py-2 border border-slate-200 rounded-xl font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={processingCampAction}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-xs cursor-pointer flex items-center space-x-1.5"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>{processingCampAction ? 'Scheduling...' : 'Confirm & Schedule Camp Drive'}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

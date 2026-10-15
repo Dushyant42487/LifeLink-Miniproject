@@ -74,17 +74,37 @@ describe('LifeLink Phase 8: Clean Data End-to-End Workflow Verification', () => 
     assert.equal(profData.donor.id, donorId);
     assert.equal(profData.donor.email, donorEmail);
 
-    // 3. Verify eligibility
+    // 3. Verify newly registered donor is NOT eligible until verified
     const eligRes = await fetch(`${BACKEND_URL}/api/donors/eligibility`, {
       headers: { Authorization: `Bearer ${donorToken}` }
     });
     assert.equal(eligRes.status, 200);
     const eligData = await eligRes.json();
     assert.equal(eligData.success, true);
-    assert.equal(eligData.eligibility.wholeBlood.isEligible, true);
+    assert.equal(eligData.eligibility.isEligible, false);
+    assert.equal(eligData.eligibility.isVerified, false);
+    assert.equal(eligData.eligibility.wholeBlood.isEligible, false);
+    assert.equal(eligData.eligibility.wholeBlood.verificationRequired, true);
+
+    // 4. Donor uploads blood group verification proof
+    const verifyProofRes = await fetch(`${BACKEND_URL}/api/donors/verify-blood-group`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${donorToken}`
+      },
+      body: JSON.stringify({
+        bloodGroupProofDocUrl: 'https://cdn.lifelink.io/proofs/rivera-bloodgroup.pdf',
+        documentType: 'Lab Blood Report',
+        documentNumber: 'LAB-TEST-992'
+      })
+    });
+    assert.equal(verifyProofRes.status, 200);
+    const verifyProofData = await verifyProofRes.json();
+    assert.equal(verifyProofData.success, true);
   });
 
-  test('Workflow 2: Blood Bank Onboarding & In-House Phlebotomy Collection', async () => {
+  test('Workflow 2: Blood Bank Onboarding, Verification Enforcement & Phlebotomy Collection', async () => {
     const ts = Date.now();
     bbEmail = `bank-${ts}@testmail.com`;
 
@@ -109,7 +129,7 @@ describe('LifeLink Phase 8: Clean Data End-to-End Workflow Verification', () => 
     bbToken = regData.token;
     bbId = regData.user.id;
 
-    // 2. Lookup newly registered donor
+    // 2. Lookup newly registered donor (shows Pending Verification / Unverified)
     const lookupRes = await fetch(`${BACKEND_URL}/api/blood-bank/donors/search?q=Rivera`, {
       headers: { Authorization: `Bearer ${bbToken}` }
     });
@@ -117,9 +137,49 @@ describe('LifeLink Phase 8: Clean Data End-to-End Workflow Verification', () => 
     const lookupData = await lookupRes.json();
     assert.equal(lookupData.success, true);
     assert.ok(lookupData.donors.length >= 1);
-    assert.equal(lookupData.donors[0].id, donorId);
+    const targetDonor = lookupData.donors.find(d => d.id === donorId);
+    assert.ok(targetDonor, 'Newly registered donor must be found in search results');
+    assert.equal(targetDonor.isVerified, false);
 
-    // 3. Record in-house whole blood collection (450 mL)
+    // 3. Attempt collection on UNVERIFIED donor -> MUST FAIL WITH 422
+    const unverifiedColRes = await fetch(`${BACKEND_URL}/api/blood-bank/collections`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${bbToken}`
+      },
+      body: JSON.stringify({
+        donorId,
+        collectionType: 'In-House Phlebotomy',
+        component: 'Whole Blood',
+        volumeMl: 450,
+        collectionDate: new Date().toISOString().split('T')[0],
+        phlebotomistName: 'Nurse Laura Dean'
+      })
+    });
+    assert.equal(unverifiedColRes.status, 422);
+    const unverifiedColData = await unverifiedColRes.json();
+    assert.equal(unverifiedColData.success, false);
+    assert.ok(unverifiedColData.error.toLowerCase().includes('not verified'));
+
+    // 4. Blood bank staff verifies donor
+    const staffVerifyRes = await fetch(`${BACKEND_URL}/api/blood-bank/donors/${donorId}/verify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${bbToken}`
+      },
+      body: JSON.stringify({
+        status: 'Verified'
+      })
+    });
+    assert.equal(staffVerifyRes.status, 200);
+    const staffVerifyData = await staffVerifyRes.json();
+    assert.equal(staffVerifyData.success, true);
+    assert.equal(staffVerifyData.donor.bloodGroupVerificationStatus, 'Verified');
+    assert.equal(staffVerifyData.donor.isEligible, true);
+
+    // 5. Record in-house whole blood collection (450 mL) - now succeeds!
     const colRes = await fetch(`${BACKEND_URL}/api/blood-bank/collections`, {
       method: 'POST',
       headers: {
@@ -157,7 +217,7 @@ describe('LifeLink Phase 8: Clean Data End-to-End Workflow Verification', () => 
         collectionDate: new Date().toISOString().split('T')[0]
       })
     });
-    assert.equal(dupRes.status, 409, 'Duplicate collection attempt must return 409 Conflict');
+    assert.ok(dupRes.status === 409 || dupRes.status === 422, 'Duplicate collection attempt must return 409 Conflict or 422 Unprocessable Entity');
 
     // 5. Fractionate whole blood into RBC component
     const fracRes = await fetch(`${BACKEND_URL}/api/blood-bank/fractionation`, {

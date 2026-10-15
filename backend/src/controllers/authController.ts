@@ -6,6 +6,7 @@ import { db } from '../models/store';
 import { JWT_SECRET, AuthenticatedRequest } from '../middleware/auth';
 import { DonorProfile, HospitalProfile, BloodBankProfile, UserRole } from '../models/types';
 import { parseCoordinates } from '../utils/geo';
+import { syncDonorAuthoritativeEligibility } from '../services/donorEligibilityService';
 
 export const login = async (req: Request, res: Response) => {
   await safeSupabaseSync();
@@ -65,6 +66,10 @@ export const login = async (req: Request, res: Response) => {
       JWT_SECRET,
       { expiresIn: '24h' }
     );
+
+    if (user.role === 'donor') {
+      syncDonorAuthoritativeEligibility(user);
+    }
 
     const { passwordHash, ...userWithoutPassword } = user;
 
@@ -150,7 +155,10 @@ export const register = async (req: Request, res: Response) => {
         longitude: donorCoords.lng,
         emergencyContact: emergencyContact || { name: '', phone: '', relation: '' },
         weightKg: Number(weightKg) || 0,
-        isEligible: true,
+        isEligible: false,
+        bloodGroupVerificationStatus: 'Unverified',
+        verificationStatus: 'Unverified',
+        deferralReason: 'Donor verification required. Please submit blood group verification proof to confirm eligibility.',
         totalDonationsCount: 0,
         totalVolumeMl: 0,
         notificationPreferences: {
@@ -160,6 +168,9 @@ export const register = async (req: Request, res: Response) => {
         },
         createdAt
       };
+
+      // Run authoritative eligibility sync
+      syncDonorAuthoritativeEligibility(newDonor);
 
       db.donors.push(newDonor);
       await persistRecordDirect('donors', newDonor);
@@ -315,6 +326,10 @@ export const getMe = async (req: AuthenticatedRequest, res: Response) => {
     if (!user) {
     
       return res.status(404).json({ success: false, error: 'User profile not found' });
+    }
+
+    if (role === 'donor') {
+      syncDonorAuthoritativeEligibility(user);
     }
 
     const { passwordHash, ...userWithoutPassword } = user;

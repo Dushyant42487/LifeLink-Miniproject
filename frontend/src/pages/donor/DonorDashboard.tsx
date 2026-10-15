@@ -13,6 +13,7 @@ import {
   Building2, 
   ArrowRight, 
   ShieldCheck, 
+  ShieldAlert,
   FileText, 
   QrCode, 
   CalendarCheck,
@@ -98,6 +99,10 @@ export const DonorDashboard: React.FC = () => {
   const isPltEligible = Boolean(platelets?.isEligible);
   const isAnyEligible = isWbEligible || isPltEligible;
 
+  // Authoritative Verification Status
+  const verificationStatus = eligibility?.verificationStatus || donorProfile?.bloodGroupVerificationStatus || donorProfile?.verificationStatus || (user as any)?.bloodGroupVerificationStatus || user?.verificationStatus || 'Unverified';
+  const isVerified = verificationStatus === 'Verified';
+
   const donorName = user?.name || 'Valued Donor';
   const bloodGroup = eligibility?.bloodGroup || user?.bloodGroup || VERIFIED_DONOR_BLOOD_GROUP;
   const savedRadiusKm = Number(donorProfile?.travelRadiusKm || (user as any)?.travelRadiusKm || 25);
@@ -110,13 +115,13 @@ export const DonorDashboard: React.FC = () => {
   const wbCooldownDays = wholeBlood?.coolOffDaysTotal || 56;
   const wbDaysRemaining = typeof wholeBlood?.daysRemaining === 'number' ? Math.max(0, wholeBlood.daysRemaining) : 0;
   const wbDaysElapsed = Math.max(0, wbCooldownDays - wbDaysRemaining);
-  const wbProgressPct = isWbEligible ? 100 : Math.min(100, Math.round((wbDaysElapsed / wbCooldownDays) * 100));
+  const wbProgressPct = !isVerified ? 0 : (isWbEligible ? 100 : Math.min(100, Math.round((wbDaysElapsed / wbCooldownDays) * 100)));
 
   // Cooldown calculation for Platelet Apheresis (14-Day Policy)
   const pltCooldownDays = platelets?.coolOffDaysTotal || 14;
   const pltDaysRemaining = typeof platelets?.daysRemaining === 'number' ? Math.max(0, platelets.daysRemaining) : 0;
   const pltDaysElapsed = Math.max(0, pltCooldownDays - pltDaysRemaining);
-  const pltProgressPct = isPltEligible ? 100 : Math.min(100, Math.round((pltDaysElapsed / pltCooldownDays) * 100));
+  const pltProgressPct = !isVerified ? 0 : (isPltEligible ? 100 : Math.min(100, Math.round((pltDaysElapsed / pltCooldownDays) * 100)));
 
   // Eligibility-aware booking CTA definition
   const bookingCta = useMemo(() => {
@@ -134,6 +139,23 @@ export const DonorDashboard: React.FC = () => {
         action: () => navigate('/donor/eligibility'),
         disabled: false,
         variant: 'review'
+      };
+    }
+    // If donor is not yet verified
+    if (!isVerified) {
+      if (verificationStatus === 'Pending Verification') {
+        return {
+          label: 'Verification Pending Review',
+          action: () => navigate('/donor/profile'),
+          disabled: false,
+          variant: 'pending'
+        };
+      }
+      return {
+        label: 'Complete Verification to Donate',
+        action: () => navigate('/donor/profile'),
+        disabled: false,
+        variant: 'unverified'
       };
     }
     // If Platelet Apheresis is confirmed eligible while Whole Blood is in cool-off
@@ -161,7 +183,7 @@ export const DonorDashboard: React.FC = () => {
       disabled: false,
       variant: 'cooloff'
     };
-  }, [loadingEligibility, eligibilityError, isWbEligible, isPltEligible, navigate]);
+  }, [loadingEligibility, eligibilityError, isVerified, verificationStatus, isWbEligible, isPltEligible, navigate]);
 
   // Filter emergency alerts strictly by active status and saved travel radius
   const eligibleAlerts = useMemo(() => {
@@ -198,10 +220,27 @@ export const DonorDashboard: React.FC = () => {
       <div className="bg-white rounded-3xl p-6 sm:p-7 shadow-xs border border-slate-200/80 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 relative overflow-hidden">
         <div className="relative z-10 space-y-2">
           <div className="flex items-center space-x-2">
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-rose-50 text-rose-700 border border-rose-200 flex items-center space-x-1">
-              <ShieldCheck className="w-3.5 h-3.5 text-rose-600" />
-              <span>Verified Donor</span>
-            </span>
+            {isVerified ? (
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center space-x-1">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Verified Donor</span>
+              </span>
+            ) : verificationStatus === 'Pending Verification' ? (
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200 flex items-center space-x-1">
+                <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
+                <span>Verification Pending</span>
+              </span>
+            ) : verificationStatus === 'Rejected' ? (
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-rose-50 text-rose-700 border border-rose-200 flex items-center space-x-1">
+                <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                <span>Verification Rejected</span>
+              </span>
+            ) : (
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-slate-100 text-slate-700 border border-slate-300 flex items-center space-x-1">
+                <AlertTriangle className="w-3.5 h-3.5 text-slate-500" />
+                <span>Verification Required</span>
+              </span>
+            )}
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-slate-900 text-white shadow-xs">
               {bloodGroup} Group
             </span>
@@ -235,9 +274,13 @@ export const DonorDashboard: React.FC = () => {
             <div className="flex items-center gap-2">
               <button
                 onClick={bookingCta.action}
-                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-800 bg-slate-100 hover:bg-slate-200 transition-all flex items-center space-x-2 border border-slate-200 cursor-pointer"
+                className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 border cursor-pointer ${
+                  !isVerified
+                    ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                    : 'text-slate-800 bg-slate-100 hover:bg-slate-200 border-slate-200'
+                }`}
               >
-                <CalendarCheck className="w-4 h-4 text-slate-500" />
+                {!isVerified ? <ShieldCheck className="w-4 h-4 text-rose-600" /> : <CalendarCheck className="w-4 h-4 text-slate-500" />}
                 <span>{bookingCta.label}</span>
               </button>
               <button
@@ -401,10 +444,41 @@ export const DonorDashboard: React.FC = () => {
             ) : (
               <div className="space-y-4">
                 
+                {/* Unverified / Verification Pending Alert Banner */}
+                {!isVerified && (
+                  <div className={`p-4 rounded-xl border flex items-start space-x-3 ${
+                    verificationStatus === 'Pending Verification'
+                      ? 'bg-amber-50 border-amber-200 text-amber-900'
+                      : 'bg-rose-50 border-rose-200 text-rose-900'
+                  }`}>
+                    <ShieldAlert className="w-5 h-5 shrink-0 mt-0.5 text-rose-600" />
+                    <div className="flex-1 text-xs">
+                      <h4 className="font-bold">
+                        {verificationStatus === 'Pending Verification'
+                          ? 'Verification Under Blood Bank Review'
+                          : 'Identity & Blood-Group Verification Required'}
+                      </h4>
+                      <p className="mt-1 text-slate-600">
+                        {verificationStatus === 'Pending Verification'
+                          ? 'Your blood group documentation has been submitted and is currently being verified by blood bank personnel. You will be cleared to book appointments once approved.'
+                          : 'To ensure donor and recipient safety, clinical guidelines require verified blood group documentation before scheduling blood or platelet donations.'}
+                      </p>
+                      <Link
+                        to="/donor/profile"
+                        className="inline-flex items-center mt-2.5 font-bold text-xs text-rose-600 hover:text-rose-700 underline"
+                      >
+                        {verificationStatus === 'Pending Verification' ? 'View Submitted Documents' : 'Upload Verification Document in Profile'} →
+                      </Link>
+                    </div>
+                  </div>
+                )}
+
                 {/* 1. Whole Blood Deferral Progress */}
                 <div className={`p-4 rounded-xl border transition-all ${
                   isWbEligible 
                     ? 'bg-emerald-50/60 border-emerald-200' 
+                    : !isVerified
+                    ? 'bg-slate-50/80 border-slate-200'
                     : 'bg-rose-50/60 border-rose-200'
                 }`}>
                   <div className="flex items-center justify-between mb-2">
@@ -416,17 +490,23 @@ export const DonorDashboard: React.FC = () => {
                     <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${
                       isWbEligible
                         ? 'bg-emerald-100 text-[#16A34A] border-emerald-300'
+                        : !isVerified
+                        ? (verificationStatus === 'Pending Verification' ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-slate-100 text-slate-700 border-slate-300')
                         : 'bg-rose-100 text-[#DC2626] border-rose-300'
                     }`}>
-                      {isWbEligible ? 'Eligible to Donate' : `Cool-off Active (${wbDaysRemaining} Days Left)`}
+                      {isWbEligible 
+                        ? 'Eligible to Donate' 
+                        : !isVerified
+                        ? (verificationStatus === 'Pending Verification' ? 'Pending Review' : 'Verification Required')
+                        : `Cool-off Active (${wbDaysRemaining} Days Left)`}
                     </span>
                   </div>
 
                   {/* Progress Bar */}
                   <div className="space-y-1">
                     <div className="flex justify-between text-[10px] text-slate-500 font-medium">
-                      <span>Rest Progress: {wbProgressPct}% Elapsed</span>
-                      <span>Next Date: <strong className="text-slate-800">{wholeBlood?.nextEligibleDate || 'Eligible Now'}</strong></span>
+                      <span>Rest Progress: {!isVerified ? '0% (Verification Required)' : `${wbProgressPct}% Elapsed`}</span>
+                      <span>Next Date: <strong className="text-slate-800">{!isVerified ? (verificationStatus === 'Pending Verification' ? 'Pending Review' : 'Verification Required') : (wholeBlood?.nextEligibleDate || 'Eligible Now')}</strong></span>
                     </div>
                     <div 
                       className="w-full h-2 bg-slate-100 rounded-full overflow-hidden border border-slate-200/80"
@@ -437,7 +517,7 @@ export const DonorDashboard: React.FC = () => {
                       aria-label="Whole blood donation eligibility cooldown progress"
                     >
                       <div 
-                        className={`h-full rounded-full transition-all duration-500 ${isWbEligible ? 'bg-emerald-500' : 'bg-rose-600'}`}
+                        className={`h-full rounded-full transition-all duration-500 ${isWbEligible ? 'bg-emerald-500' : (!isVerified ? 'bg-slate-300' : 'bg-rose-600')}`}
                         style={{ width: `${wbProgressPct}%` }}
                       />
                     </div>
@@ -448,6 +528,8 @@ export const DonorDashboard: React.FC = () => {
                 <div className={`p-4 rounded-xl border transition-all ${
                   isPltEligible 
                     ? 'bg-emerald-50/60 border-emerald-200' 
+                    : !isVerified
+                    ? 'bg-slate-50/80 border-slate-200'
                     : 'bg-purple-50/60 border-purple-200'
                 }`}>
                   <div className="flex items-center justify-between mb-2">
@@ -459,17 +541,23 @@ export const DonorDashboard: React.FC = () => {
                     <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${
                       isPltEligible
                         ? 'bg-emerald-100 text-[#16A34A] border-emerald-300'
+                        : !isVerified
+                        ? (verificationStatus === 'Pending Verification' ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-slate-100 text-slate-700 border-slate-300')
                         : 'bg-purple-100 text-purple-700 border-purple-300'
                     }`}>
-                      {isPltEligible ? 'Eligible to Donate' : `Cool-off Active (${pltDaysRemaining} Days Left)`}
+                      {isPltEligible 
+                        ? 'Eligible to Donate' 
+                        : !isVerified
+                        ? (verificationStatus === 'Pending Verification' ? 'Pending Review' : 'Verification Required')
+                        : `Cool-off Active (${pltDaysRemaining} Days Left)`}
                     </span>
                   </div>
 
                   {/* Progress Bar */}
                   <div className="space-y-1">
                     <div className="flex justify-between text-[10px] text-slate-500 font-medium">
-                      <span>Rest Progress: {pltProgressPct}% Elapsed</span>
-                      <span>Next Date: <strong className="text-slate-800">{platelets?.nextEligibleDate || 'Eligible Now'}</strong></span>
+                      <span>Rest Progress: {!isVerified ? '0% (Verification Required)' : `${pltProgressPct}% Elapsed`}</span>
+                      <span>Next Date: <strong className="text-slate-800">{!isVerified ? (verificationStatus === 'Pending Verification' ? 'Pending Review' : 'Verification Required') : (platelets?.nextEligibleDate || 'Eligible Now')}</strong></span>
                     </div>
                     <div 
                       className="w-full h-2 bg-slate-100 rounded-full overflow-hidden border border-slate-200/80"
@@ -480,7 +568,7 @@ export const DonorDashboard: React.FC = () => {
                       aria-label="Platelet apheresis eligibility cooldown progress"
                     >
                       <div 
-                        className={`h-full rounded-full transition-all duration-500 ${isPltEligible ? 'bg-emerald-500' : 'bg-purple-600'}`}
+                        className={`h-full rounded-full transition-all duration-500 ${isPltEligible ? 'bg-emerald-500' : (!isVerified ? 'bg-slate-300' : 'bg-purple-600')}`}
                         style={{ width: `${pltProgressPct}%` }}
                       />
                     </div>

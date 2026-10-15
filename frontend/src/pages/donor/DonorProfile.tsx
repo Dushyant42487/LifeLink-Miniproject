@@ -445,7 +445,7 @@ export const DonorProfile: React.FC = () => {
     }
   };
 
-  const verificationStatus = profile?.bloodGroupVerificationStatus || 'Verified';
+  const verificationStatus = profile?.bloodGroupVerificationStatus || profile?.verificationStatus || (user as any)?.bloodGroupVerificationStatus || user?.verificationStatus || 'Unverified';
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
@@ -834,11 +834,34 @@ export const DonorProfile: React.FC = () => {
           </div>
 
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs text-slate-700 space-y-2">
-            <p>
-              Current Status: <strong className="text-slate-900">{verificationStatus}</strong>
-            </p>
+            <div className="flex items-center justify-between">
+              <p>
+                Current Status: <strong className="text-slate-900">{verificationStatus}</strong>
+              </p>
+              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
+                verificationStatus === 'Verified'
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : verificationStatus === 'Pending Verification'
+                  ? 'bg-amber-50 text-amber-700 border-amber-200'
+                  : verificationStatus === 'Rejected'
+                  ? 'bg-rose-50 text-rose-700 border-rose-200'
+                  : 'bg-slate-100 text-slate-600 border-slate-200'
+              }`}>
+                {verificationStatus}
+              </span>
+            </div>
+            {profile?.rejectionReason && (
+              <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-lg text-xs font-medium">
+                <strong>Rejection Reason:</strong> {profile.rejectionReason}. Please upload valid supporting documentation.
+              </div>
+            )}
+            {profile?.verifiedAt && (
+              <p className="text-[11px] text-emerald-700 font-medium">
+                ✓ Clinically verified on {new Date(profile.verifiedAt).toLocaleDateString()} {profile.verifiedByName ? `by ${profile.verifiedByName}` : ''}
+              </p>
+            )}
             <p className="text-[11px] text-slate-500">
-              Submit an official lab report, donor card, or medical certificate to verify your blood group with LifeLink partner blood centers.
+              Submit an official lab report, donor card, or medical certificate to verify your blood group with LifeLink partner blood centers. Note that 100% profile completeness does not substitute for clinical document verification.
             </p>
           </div>
 

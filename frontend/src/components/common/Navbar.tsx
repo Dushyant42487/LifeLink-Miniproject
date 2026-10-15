@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { donorApi } from '../../services/api';
+import { donorApi, notificationsApi } from '../../services/api';
 import { AppNotification } from '../../types';
 import { Droplet, Bell, LogOut, ChevronDown, Sparkles, Menu, X, ChevronRight, User, CheckCheck, Clock, ExternalLink, LayoutDashboard, UserCheck, History, Compass, AlertCircle } from 'lucide-react';
 
@@ -106,14 +106,16 @@ export const Navbar: React.FC = () => {
 
   // Fetch notifications
   useEffect(() => {
-    if (user && user.role === 'donor') {
+    if (user) {
       fetchNotifications();
+    } else {
+      setNotifications([]);
     }
   }, [user, location.pathname]);
 
   const fetchNotifications = async () => {
     setLoadingNotifs(true);
-    const res = await donorApi.getNotifications();
+    const res = await notificationsApi.getNotifications();
     if (res.success && res.notifications) {
       setNotifications(res.notifications);
     }
@@ -122,12 +124,12 @@ export const Navbar: React.FC = () => {
 
   const handleMarkAsRead = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    await donorApi.markNotificationRead(id);
+    await notificationsApi.markRead(id);
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
   };
 
   const handleMarkAllRead = async () => {
-    await donorApi.markAllNotificationsRead();
+    await notificationsApi.markAllRead();
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
   };
 

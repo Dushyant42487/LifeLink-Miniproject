@@ -24,7 +24,8 @@ import {
   DispatchStatus
 } from '../models/types';
 
-import { safeSupabaseSync } from '../models/db';
+import { safeSupabaseSync, persistRecordDirect } from '../models/db';
+import { syncDonorAuthoritativeEligibility } from '../services/donorEligibilityService';
 
 /**
  * Calculates days remaining from today until expiry date
@@ -120,8 +121,7 @@ export const getBloodBankDashboard = async (req: AuthenticatedRequest, res: Resp
     .map(([bg, _]) => bg as BloodGroup);
 
   const todayStr = new Date().toISOString().split('T')[0];
-  const todayCollectionsCount = db.bloodCollections.filter(c => c.bloodBankId === bankId && c.collectionDate === todayStr).length ||
-    bankUnits.filter(u => u.collectionDate === todayStr).length || 4;
+  const todayCollectionsCount = db.bloodCollections.filter(c => c.bloodBankId === bankId && c.collectionDate === todayStr).length;
 
   res.json({
     success: true,
@@ -589,6 +589,8 @@ export const addBloodUnit = async (req: AuthenticatedRequest, res: Response) => 
 
   db.testingRecords.unshift(newTestingRecord);
 
+  db.saveSnapshot();
+
   res.status(201).json({
     success: true,
     message: 'New blood unit recorded and sent to quarantine for infectious disease screening.',
@@ -613,19 +615,64 @@ export const getTestingRecords = async (req: AuthenticatedRequest, res: Response
     return res.status(401).json({ success: false, error: 'Unauthorized blood bank facility' });
   }
 
-  const { status, filter } = req.query;
+  // Ensure all units belonging to this blood bank have matching testing records
+  const bankUnits = db.bloodUnits.filter(u => u.bloodBankId === bankId);
+  let newlySynthesized = false;
+
+  for (const u of bankUnits) {
+    const existingRec = db.testingRecords.find(t => t.unitId === u.id);
+    if (!existingRec) {
+      const isPassed = u.testingStatus === 'Passed';
+      const isFailed = u.testingStatus === 'Failed';
+      const initialMarker = isPassed ? 'Negative' : isFailed ? 'Positive' : 'Pending';
+      const newRec: TestingRecord = {
+        id: `TST-${u.id.replace('UNIT-2026-', '')}`,
+        unitId: u.id,
+        bloodBankId: bankId,
+        bloodGroup: u.bloodGroup,
+        hivTest: initialMarker,
+        hbvTest: initialMarker,
+        hcvTest: initialMarker,
+        syphilisTest: initialMarker,
+        malariaTest: initialMarker,
+        status: u.testingStatus || 'Pending',
+        testedBy: isPassed ? 'Lab Specialist' : 'Pending Assignment',
+        testingDate: u.collectionDate || new Date().toISOString().split('T')[0],
+        notes: isPassed ? 'Unit passed mandatory infectious disease screening.' : 'Unit in quarantine awaiting screening.'
+      };
+      db.testingRecords.push(newRec);
+      newlySynthesized = true;
+    }
+  }
+
+  if (newlySynthesized) {
+    db.saveSnapshot();
+  }
+
+  const { status, filter, unitId } = req.query;
 
   let records = db.testingRecords.filter(t => t.bloodBankId === bankId);
-  const statusFilter = status || filter;
+
+  // If specific unitId requested, filter by unitId
+  if (unitId) {
+    const cleanUnitId = String(unitId).trim().toUpperCase();
+    records = records.filter(t => t.unitId.toUpperCase() === cleanUnitId || t.id.toUpperCase() === cleanUnitId);
+  }
+
+  const statusFilter = (status || filter || 'pending').toString().toLowerCase();
 
   if (statusFilter === 'pending') {
-    records = records.filter(t => t.status === 'Pending' || t.status === 'In Testing' || (t.status === 'Quarantined' && t.hivTest === 'Pending'));
+    records = records.filter(t => 
+      t.status === 'Pending' || 
+      t.status === 'In Testing' || 
+      (t.status === 'Quarantined' && (t.hivTest === 'Pending' || t.hbvTest === 'Pending' || t.hcvTest === 'Pending' || t.syphilisTest === 'Pending' || t.malariaTest === 'Pending'))
+    );
   } else if (statusFilter === 'passed') {
     records = records.filter(t => t.status === 'Passed');
   } else if (statusFilter === 'failed') {
-    records = records.filter(t => t.status === 'Failed' || t.status === 'Quarantined');
-  } else if (statusFilter && statusFilter !== 'all') {
-    records = records.filter(t => t.status === statusFilter);
+    records = records.filter(t => t.status === 'Failed' || (t.status === 'Quarantined' && (t.hivTest === 'Positive' || t.hbvTest === 'Positive' || t.hcvTest === 'Positive' || t.syphilisTest === 'Positive' || t.malariaTest === 'Positive')));
+  } else if (statusFilter !== 'all') {
+    records = records.filter(t => t.status.toLowerCase() === statusFilter);
   }
 
   const enriched = records.map(r => {
@@ -638,7 +685,8 @@ export const getTestingRecords = async (req: AuthenticatedRequest, res: Response
       collectionDate: u?.collectionDate,
       storageLocation: u?.storageLocation,
       expiryDate: u?.expiryDate,
-      unitAvailability: u?.availability
+      unitAvailability: u?.availability,
+      daysRemaining: u?.expiryDate ? calculateDaysRemaining(u.expiryDate) : null
     };
   });
 
@@ -646,7 +694,7 @@ export const getTestingRecords = async (req: AuthenticatedRequest, res: Response
 };
 
 /**
- * Update Infectious Disease Screening Results
+ * Update Infectious Disease Screening Results with Strict Clinical Clearance
  */
 export const updateTestingStatus = async (req: AuthenticatedRequest, res: Response) => {
   await safeSupabaseSync();
@@ -654,34 +702,191 @@ export const updateTestingStatus = async (req: AuthenticatedRequest, res: Respon
   const bb = resolveBloodBank(req);
   const bankId = bb?.id || req.user?.id;
 
-  const { id } = req.params;
-  const { status, hivTest, hbvTest, hcvTest, syphilisTest, malariaTest, notes } = req.body;
+  if (!bankId) {
+    return res.status(401).json({ success: false, error: 'Unauthorized blood bank facility' });
+  }
 
-  const record = db.testingRecords.find(r => (r.id === id || r.unitId === id) && r.bloodBankId === bankId);
+  const { id } = req.params;
+  const { status, hivTest, hbvTest, hcvTest, syphilisTest, malariaTest, notes, testedBy } = req.body;
+
+  let record = db.testingRecords.find(r => (r.id === id || r.unitId === id) && r.bloodBankId === bankId);
+  
+  // If not found in records, check if unit exists in bloodUnits for this blood bank
+  if (!record) {
+    const unit = db.bloodUnits.find(u => u.id === id && u.bloodBankId === bankId);
+    if (unit) {
+      record = {
+        id: `TST-${unit.id.replace('UNIT-2026-', '')}`,
+        unitId: unit.id,
+        bloodBankId: bankId,
+        bloodGroup: unit.bloodGroup,
+        hivTest: 'Pending',
+        hbvTest: 'Pending',
+        hcvTest: 'Pending',
+        syphilisTest: 'Pending',
+        malariaTest: 'Pending',
+        status: 'Pending',
+        testedBy: req.user?.name || 'Lab Staff',
+        testingDate: unit.collectionDate || new Date().toISOString().split('T')[0],
+        notes: 'Infectious disease screening record.'
+      };
+      db.testingRecords.push(record);
+    }
+  }
+
   if (!record) {
     return res.status(404).json({ success: false, error: 'Testing record not found or access denied.' });
   }
 
-  if (hivTest) record.hivTest = hivTest;
-  if (hbvTest) record.hbvTest = hbvTest;
-  if (hcvTest) record.hcvTest = hcvTest;
-  if (syphilisTest) record.syphilisTest = syphilisTest;
-  if (malariaTest) record.malariaTest = malariaTest;
-  if (status) record.status = status;
-  if (notes) record.notes = notes;
-  record.testedBy = req.user?.name || record.testedBy;
+  const normalizeMarker = (val: any): 'Negative' | 'Positive' | 'Pending' | null => {
+    if (val === undefined || val === null) return null;
+    const s = String(val).trim().toLowerCase();
+    if (s === 'negative' || s === 'non-reactive' || s === 'nonreactive' || s === 'clear') return 'Negative';
+    if (s === 'positive' || s === 'reactive' || s.includes('reactive') || s.includes('positive')) return 'Positive';
+    if (s === 'pending' || s === 'in progress' || s === 'invalid' || s === 'incomplete') return 'Pending';
+    return null;
+  };
+
+  // Validate and assign marker updates (supporting both hivTest and hiv aliases)
+  const rawHiv = hivTest !== undefined ? hivTest : req.body.hiv;
+  if (rawHiv !== undefined) {
+    const norm = normalizeMarker(rawHiv);
+    if (!norm) return res.status(400).json({ success: false, error: `Invalid result value for HIV test: '${rawHiv}'. Allowed values: Negative, Positive, Pending.` });
+    record.hivTest = norm;
+  }
+
+  const rawHbv = hbvTest !== undefined ? hbvTest : req.body.hbv;
+  if (rawHbv !== undefined) {
+    const norm = normalizeMarker(rawHbv);
+    if (!norm) return res.status(400).json({ success: false, error: `Invalid result value for Hepatitis B test: '${rawHbv}'. Allowed values: Negative, Positive, Pending.` });
+    record.hbvTest = norm;
+  }
+
+  const rawHcv = hcvTest !== undefined ? hcvTest : req.body.hcv;
+  if (rawHcv !== undefined) {
+    const norm = normalizeMarker(rawHcv);
+    if (!norm) return res.status(400).json({ success: false, error: `Invalid result value for Hepatitis C test: '${rawHcv}'. Allowed values: Negative, Positive, Pending.` });
+    record.hcvTest = norm;
+  }
+
+  const rawSyphilis = syphilisTest !== undefined ? syphilisTest : req.body.syphilis;
+  if (rawSyphilis !== undefined) {
+    const norm = normalizeMarker(rawSyphilis);
+    if (!norm) return res.status(400).json({ success: false, error: `Invalid result value for Syphilis test: '${rawSyphilis}'. Allowed values: Negative, Positive, Pending.` });
+    record.syphilisTest = norm;
+  }
+
+  const rawMalaria = malariaTest !== undefined ? malariaTest : req.body.malaria;
+  if (rawMalaria !== undefined) {
+    const norm = normalizeMarker(rawMalaria);
+    if (!norm) return res.status(400).json({ success: false, error: `Invalid result value for Malaria test: '${rawMalaria}'. Allowed values: Negative, Positive, Pending.` });
+    record.malariaTest = norm;
+  }
+
+  if (notes !== undefined) record.notes = notes;
+  if (testedBy) record.testedBy = testedBy;
+  else if (req.user?.name) record.testedBy = req.user.name;
 
   const unit = db.bloodUnits.find(u => u.id === record.unitId);
-  if (unit) {
-    unit.testingStatus = record.status;
-    if (record.status === 'Passed') {
+
+  // Check if any marker is Positive (Reactive)
+  const isReactive = record.hivTest === 'Positive' || 
+                     record.hbvTest === 'Positive' || 
+                     record.hcvTest === 'Positive' || 
+                     record.syphilisTest === 'Positive' || 
+                     record.malariaTest === 'Positive';
+
+  // Check if all 5 markers are confirmed Negative
+  const allNegative = record.hivTest === 'Negative' && 
+                      record.hbvTest === 'Negative' && 
+                      record.hcvTest === 'Negative' && 
+                      record.syphilisTest === 'Negative' && 
+                      record.malariaTest === 'Negative';
+
+  // If user requests to pass/clear the unit
+  if (status === 'Passed') {
+    if (isReactive) {
+      const reactiveMarkers = [];
+      if (record.hivTest === 'Positive') reactiveMarkers.push('HIV');
+      if (record.hbvTest === 'Positive') reactiveMarkers.push('Hepatitis B');
+      if (record.hcvTest === 'Positive') reactiveMarkers.push('Hepatitis C');
+      if (record.syphilisTest === 'Positive') reactiveMarkers.push('Syphilis');
+      if (record.malariaTest === 'Positive') reactiveMarkers.push('Malaria');
+
+      return res.status(422).json({
+        success: false,
+        error: `Cannot clear unit ${record.unitId} for clinical use: Reactive result detected for [${reactiveMarkers.join(', ')}]. Unit must remain quarantined and scheduled for biohazard disposal.`,
+        reactiveMarkers
+      });
+    }
+
+    if (!allNegative) {
+      const pendingMarkers = [];
+      if (record.hivTest !== 'Negative') pendingMarkers.push('HIV');
+      if (record.hbvTest !== 'Negative') pendingMarkers.push('Hepatitis B');
+      if (record.hcvTest !== 'Negative') pendingMarkers.push('Hepatitis C');
+      if (record.syphilisTest !== 'Negative') pendingMarkers.push('Syphilis');
+      if (record.malariaTest !== 'Negative') pendingMarkers.push('Malaria');
+
+      return res.status(422).json({
+        success: false,
+        error: `Cannot clear unit ${record.unitId} for clinical use: All 5 mandatory infectious disease markers must be tested and confirmed Negative. Missing or pending markers: [${pendingMarkers.join(', ')}].`,
+        pendingMarkers
+      });
+    }
+
+    // Fully cleared!
+    record.status = 'Passed';
+    record.notes = notes || `Authorized clinical clearance by ${req.user?.name || 'Lab Staff'}. All 5 viral markers confirmed Negative.`;
+    (record as any).reviewedBy = req.user?.name || 'Lab Staff';
+    (record as any).reviewedAt = new Date().toISOString();
+
+    if (unit) {
+      unit.testingStatus = 'Passed';
       unit.availability = 'Available';
       unit.storageLocation = `${unit.component} Main Storage Bay`;
-    } else if (record.status === 'Failed' || record.status === 'Quarantined') {
+    }
+  } else if (status === 'Failed' || isReactive) {
+    record.status = 'Failed';
+    record.notes = notes || `REACTIVE SCREENING: Unit ${record.unitId} failed viral screening and is quarantined for biohazard disposal.`;
+    (record as any).reviewedBy = req.user?.name || 'Lab Staff';
+    (record as any).reviewedAt = new Date().toISOString();
+
+    if (unit) {
+      unit.testingStatus = 'Failed';
       unit.availability = 'Quarantined';
       unit.storageLocation = 'Biohazard Quarantine Discard Bay';
-    } else if (record.status === 'In Testing') {
+    }
+  } else if (status === 'In Testing') {
+    record.status = 'In Testing';
+    if (unit) {
+      unit.testingStatus = 'In Testing';
       unit.availability = 'Quarantined';
+    }
+  } else if (!status) {
+    if (isReactive) {
+      record.status = 'Failed';
+      if (unit) {
+        unit.testingStatus = 'Failed';
+        unit.availability = 'Quarantined';
+        unit.storageLocation = 'Biohazard Quarantine Discard Bay';
+      }
+    } else if (allNegative) {
+      if (record.status !== 'Passed') {
+        record.status = 'In Testing';
+      }
+    } else {
+      const anyTested = record.hivTest !== 'Pending' || record.hbvTest !== 'Pending' || record.hcvTest !== 'Pending' || record.syphilisTest !== 'Pending' || record.malariaTest !== 'Pending';
+      record.status = anyTested ? 'In Testing' : 'Pending';
+      if (unit && unit.testingStatus !== 'Passed') {
+        unit.testingStatus = record.status;
+        unit.availability = 'Quarantined';
+      }
+    }
+  } else {
+    record.status = status;
+    if (unit) {
+      unit.testingStatus = status;
     }
   }
 
@@ -689,7 +894,9 @@ export const updateTestingStatus = async (req: AuthenticatedRequest, res: Respon
 
   res.json({
     success: true,
-    message: `Testing status updated to ${record.status}`,
+    message: record.status === 'Passed' 
+      ? `Unit ${record.unitId} verified NEGATIVE on all 5 viral markers and released to available inventory.`
+      : `Testing status updated to ${record.status}.`,
     record,
     unit: unit ? {
       ...unit,
@@ -716,19 +923,25 @@ export const searchDonors = async (req: AuthenticatedRequest, res: Response) => 
       (d.phone && d.phone.toLowerCase().includes(q))
     )
     .slice(0, 15)
-    .map(d => ({
-      id: d.id,
-      donorCode: `DON-${d.id.replace('donor-', '')}`,
-      name: d.name,
-      email: d.email,
-      bloodGroup: d.bloodGroup,
-      isEligible: d.isEligible,
-      deferralReason: d.deferralReason,
-      lastDonationDate: d.lastDonationDate,
-      weightKg: d.weightKg,
-      totalDonationsCount: d.totalDonationsCount,
-      phone: d.phone
-    }));
+    .map(d => {
+      const eligibility = syncDonorAuthoritativeEligibility(d);
+      return {
+        id: d.id,
+        donorCode: `DON-${d.id.replace('donor-', '')}`,
+        name: d.name,
+        email: d.email,
+        bloodGroup: d.bloodGroup,
+        isEligible: eligibility.isEligible,
+        isVerified: eligibility.isVerified,
+        verificationStatus: eligibility.verificationStatus,
+        bloodGroupVerificationStatus: eligibility.verificationStatus,
+        deferralReason: eligibility.deferralReason,
+        lastDonationDate: d.lastDonationDate,
+        weightKg: d.weightKg,
+        totalDonationsCount: d.totalDonationsCount,
+        phone: d.phone
+      };
+    });
 
   res.json({ success: true, count: donors.length, donors });
 };
@@ -750,6 +963,8 @@ export const getDonorDetails = async (req: AuthenticatedRequest, res: Response) 
     return res.status(404).json({ success: false, error: `Donor ${id} not found.` });
   }
 
+  const eligibility = syncDonorAuthoritativeEligibility(donor);
+
   res.json({
     success: true,
     donor: {
@@ -759,14 +974,151 @@ export const getDonorDetails = async (req: AuthenticatedRequest, res: Response) 
       email: donor.email,
       phone: donor.phone,
       bloodGroup: donor.bloodGroup,
-      isEligible: donor.isEligible,
-      deferralReason: donor.deferralReason,
+      isEligible: eligibility.isEligible,
+      isVerified: eligibility.isVerified,
+      verificationStatus: eligibility.verificationStatus,
+      bloodGroupVerificationStatus: eligibility.verificationStatus,
+      deferralReason: eligibility.deferralReason,
       lastDonationDate: donor.lastDonationDate,
       weightKg: donor.weightKg,
       totalDonationsCount: donor.totalDonationsCount,
-      totalVolumeMl: donor.totalVolumeMl
-    }
+      totalVolumeMl: donor.totalVolumeMl,
+      proofDocument: (donor as any).proofDocument,
+      proofDocumentType: (donor as any).proofDocumentType,
+      proofDocumentNumber: (donor as any).proofDocumentNumber,
+      bloodGroupProofDocUrl: donor.bloodGroupProofDocUrl,
+      verifiedAt: donor.verifiedAt,
+      verifiedByName: donor.verifiedByName
+    },
+    eligibility
   });
+};
+
+/**
+ * Authorize or Reject Donor Blood Group & Identity Verification (Authorized Blood Bank Staff Only)
+ */
+export const verifyDonorEligibility = async (req: AuthenticatedRequest, res: Response) => {
+  await safeSupabaseSync();
+
+  const bb = resolveBloodBank(req);
+  const bankId = bb?.id || req.user?.id;
+  if (!bankId) {
+    return res.status(401).json({ success: false, error: 'Unauthorized blood bank facility' });
+  }
+
+  const { id } = req.params;
+  const donor = db.donors.find(d => 
+    d.id === id || 
+    d.id === `donor-${id.replace('DON-', '')}` || 
+    d.id === `donor-${id}`
+  );
+
+  if (!donor) {
+    return res.status(404).json({ success: false, error: `Donor ${id} not found.` });
+  }
+
+  const { status, bloodGroup, rejectionReason, notes } = req.body;
+
+  if (!status || !['Verified', 'Rejected'].includes(status)) {
+    return res.status(400).json({
+      success: false,
+      error: "Verification status must be either 'Verified' or 'Rejected'."
+    });
+  }
+
+  const bankName = bb?.bloodBankName || bb?.name || 'Authorized Blood Center';
+
+  if (status === 'Verified') {
+    donor.bloodGroupVerificationStatus = 'Verified';
+    donor.verificationStatus = 'Verified';
+    donor.verifiedBy = bankId;
+    donor.verifiedByName = bankName;
+    donor.verifiedAt = new Date().toISOString();
+    donor.rejectionReason = undefined;
+
+    if (bloodGroup && ['O-', 'O+', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'].includes(bloodGroup)) {
+      donor.bloodGroup = bloodGroup as BloodGroup;
+    }
+
+    const assessment = syncDonorAuthoritativeEligibility(donor);
+
+    // Notify donor
+    db.notifications.unshift({
+      id: `NOTIF-${Date.now()}`,
+      userId: donor.id,
+      title: 'Donor Verification Approved',
+      message: `Your blood group (${donor.bloodGroup}) verification has been reviewed and approved by ${bankName}. You are now cleared to donate!`,
+      type: 'eligibility',
+      priority: 'high',
+      read: false,
+      createdAt: new Date().toISOString(),
+      link: '/donor/dashboard'
+    });
+
+    db.saveSnapshot();
+    await persistRecordDirect('donors', donor);
+
+    return res.json({
+      success: true,
+      message: `Donor ${donor.name} successfully verified by ${bankName}.`,
+      donor: {
+        id: donor.id,
+        name: donor.name,
+        bloodGroup: donor.bloodGroup,
+        verificationStatus: donor.verificationStatus,
+        bloodGroupVerificationStatus: donor.bloodGroupVerificationStatus,
+        isEligible: donor.isEligible,
+        deferralReason: donor.deferralReason,
+        verifiedAt: donor.verifiedAt,
+        verifiedByName: donor.verifiedByName
+      },
+      eligibility: assessment
+    });
+  } else {
+    // Rejected
+    donor.bloodGroupVerificationStatus = 'Rejected';
+    donor.verificationStatus = 'Rejected';
+    donor.verifiedBy = bankId;
+    donor.verifiedByName = bankName;
+    donor.verifiedAt = new Date().toISOString();
+    donor.rejectionReason = rejectionReason || notes || 'Submitted documentation was insufficient or illegible.';
+
+    const assessment = syncDonorAuthoritativeEligibility(donor);
+
+    // Notify donor
+    db.notifications.unshift({
+      id: `NOTIF-${Date.now()}`,
+      userId: donor.id,
+      title: 'Verification Incomplete / Document Rejected',
+      message: `Your blood group verification document was rejected by ${bankName}. Reason: ${donor.rejectionReason}`,
+      type: 'eligibility',
+      priority: 'high',
+      read: false,
+      createdAt: new Date().toISOString(),
+      link: '/donor/profile'
+    });
+
+    db.saveSnapshot();
+    await persistRecordDirect('donors', donor);
+
+    return res.json({
+      success: true,
+      message: `Donor verification marked as Rejected: ${donor.rejectionReason}`,
+      donor: {
+        id: donor.id,
+        name: donor.name,
+        bloodGroup: donor.bloodGroup,
+        verificationStatus: donor.verificationStatus,
+        bloodGroupVerificationStatus: donor.bloodGroupVerificationStatus,
+        isEligible: donor.isEligible,
+        deferralReason: donor.deferralReason,
+        rejectionReason: donor.rejectionReason,
+        verifiedAt: donor.verifiedAt,
+        verifiedByName: donor.verifiedByName
+      },
+      eligibility: assessment
+    });
+  }
 };
 
 /**
@@ -818,13 +1170,40 @@ export const recordBloodCollection = async (req: AuthenticatedRequest, res: Resp
     return res.status(404).json({ success: false, error: `Donor ${donorId} not found in database.` });
   }
 
-  // Medical eligibility validation
-  if (!donor.isEligible) {
+  // Validate Collection Date
+  const colDate = collectionDate || new Date().toISOString().split('T')[0];
+  const todayStr = new Date().toISOString().split('T')[0];
+  if (colDate > todayStr) {
+    return res.status(422).json({ success: false, error: 'Collection date cannot be in the future.' });
+  }
+
+  // Authoritative medical eligibility & verification validation
+  const eligibility = syncDonorAuthoritativeEligibility(donor);
+  if (!eligibility.isVerified) {
     return res.status(422).json({
       success: false,
-      error: `Donor ${donor.name} (${donor.id}) is deferred from blood donation. Reason: ${donor.deferralReason || 'Clinical cool-off window active'}`
+      error: `Donor ${donor.name} (${donor.id}) is not verified for blood donation. Donor verification must be completed prior to collection.`
     });
   }
+  if (!eligibility.isEligible) {
+    return res.status(422).json({
+      success: false,
+      error: `Donor ${donor.name} (${donor.id}) is deferred from blood donation. Reason: ${eligibility.deferralReason || 'Clinical cool-off window active'}`
+    });
+  }
+
+  // Duplicate Submission Prevention (Same donor, same date within 5s or existing collection today)
+  const dupKey = `${bankId}:${donor.id}:${colDate}`;
+  const lastSubmitTime = recentCollectionSubmissions.get(dupKey);
+  const nowMs = Date.now();
+  const alreadyCollectedToday = db.bloodCollections.some(c => c.donorId === donor.id && c.collectionDate === colDate);
+  if ((alreadyCollectedToday || (lastSubmitTime && (nowMs - lastSubmitTime < 5000))) && !idempotencyKey) {
+    return res.status(409).json({
+      success: false,
+      error: `Duplicate collection prevented: A donation for donor ${donor.name} on ${colDate} was recently submitted.`
+    });
+  }
+  recentCollectionSubmissions.set(dupKey, nowMs);
 
   // 3. Validate Volume
   const vol = Number(volumeMl);
@@ -839,14 +1218,6 @@ export const recordBloodCollection = async (req: AuthenticatedRequest, res: Resp
     return res.status(422).json({ success: false, error: 'Recorded collection volume exceeds maximum clinical safety threshold (650 mL).' });
   }
 
-  // 4. Validate Collection Date
-  const colDate = collectionDate || new Date().toISOString().split('T')[0];
-  const todayStr = new Date().toISOString().split('T')[0];
-  if (colDate > todayStr) {
-    return res.status(422).json({ success: false, error: 'Collection date cannot be in the future.' });
-  }
-
-
   // 5. Validate Camp if provided
   let validatedCamp: DonationCamp | undefined;
   if (campId) {
@@ -858,18 +1229,6 @@ export const recordBloodCollection = async (req: AuthenticatedRequest, res: Resp
       return res.status(400).json({ success: false, error: `Cannot link collections to cancelled camp ${campId}.` });
     }
   }
-
-  // 6. Rapid Duplicate Submission Prevention (Same donor, same date within 3s)
-  const dupKey = `${bankId}:${donor.id}:${colDate}`;
-  const lastSubmitTime = recentCollectionSubmissions.get(dupKey);
-  const nowMs = Date.now();
-  if (lastSubmitTime && (nowMs - lastSubmitTime < 3000) && !idempotencyKey) {
-    return res.status(409).json({
-      success: false,
-      error: `Duplicate collection prevented: A donation for donor ${donor.name} on ${colDate} was recently submitted.`
-    });
-  }
-  recentCollectionSubmissions.set(dupKey, nowMs);
 
   // 7. Create Collection Record
   let colId = `COL-2026-${Date.now().toString().slice(-4)}${Math.floor(100 + Math.random() * 900)}`;
@@ -1967,6 +2326,38 @@ export const getEligibleUnitsForRequest = async (req: AuthenticatedRequest, res:
   // Sort FEFO (earliest expiry first)
   eligibleUnits.sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());
 
+  // Comprehensive Inventory Breakdown for Diagnostic Reporting
+  const bankComponentUnits = db.bloodUnits.filter(u => u.bloodBankId === bankId && u.component === request.component);
+  const pendingTestingUnits = bankComponentUnits.filter(u => 
+    (u.testingStatus === 'Pending' || u.testingStatus === 'In Testing' || u.availability === 'Quarantined') &&
+    checkClinicalCompatibility(u.bloodGroup, request.bloodGroup, request.component).isCompatible &&
+    calculateDaysRemaining(u.expiryDate) >= 0
+  );
+  const expiredUnits = bankComponentUnits.filter(u => 
+    calculateDaysRemaining(u.expiryDate) < 0 &&
+    checkClinicalCompatibility(u.bloodGroup, request.bloodGroup, request.component).isCompatible
+  );
+  const reservedOtherUnits = bankComponentUnits.filter(u => 
+    u.availability === 'Reserved' && u.reservedForRequestId !== request.id &&
+    checkClinicalCompatibility(u.bloodGroup, request.bloodGroup, request.component).isCompatible
+  );
+  const incompatibleUnits = bankComponentUnits.filter(u => 
+    !checkClinicalCompatibility(u.bloodGroup, request.bloodGroup, request.component).isCompatible
+  );
+
+  let explanation: string;
+  if (eligibleUnits.length > 0) {
+    explanation = `${eligibleUnits.length} released FEFO unit(s) available for immediate allocation.`;
+  } else if (pendingTestingUnits.length > 0) {
+    explanation = `${pendingTestingUnits.length} unit(s) of ${request.bloodGroup} ${request.component} exist in stock but are in Laboratory Quarantine awaiting viral screening clearance. Complete testing to release units to inventory.`;
+  } else if (reservedOtherUnits.length > 0) {
+    explanation = `All matching units (${reservedOtherUnits.length}) are currently reserved for other hospital requisitions.`;
+  } else if (expiredUnits.length > 0) {
+    explanation = `${expiredUnits.length} matching unit(s) in inventory have expired.`;
+  } else {
+    explanation = `Zero stock available for ${request.bloodGroup} ${request.component} at this blood center.`;
+  }
+
   res.json({
     success: true,
     request: {
@@ -1981,7 +2372,23 @@ export const getEligibleUnitsForRequest = async (req: AuthenticatedRequest, res:
       status: request.status
     },
     count: eligibleUnits.length,
-    units: eligibleUnits
+    units: eligibleUnits,
+    diagnostics: {
+      totalComponentInBank: bankComponentUnits.length,
+      pendingTestingCount: pendingTestingUnits.length,
+      pendingTestingUnits: pendingTestingUnits.map(u => ({
+        id: u.id,
+        bloodGroup: u.bloodGroup,
+        testingStatus: u.testingStatus,
+        availability: u.availability,
+        collectionDate: u.collectionDate,
+        expiryDate: u.expiryDate
+      })),
+      expiredCount: expiredUnits.length,
+      reservedOtherCount: reservedOtherUnits.length,
+      incompatibleCount: incompatibleUnits.length,
+      explanation
+    }
   });
 };
 
@@ -2109,13 +2516,27 @@ export const allocateUnitsToRequest = async (req: AuthenticatedRequest, res: Res
 
   const now = new Date().toISOString();
   request.assignedUnitIds = uniqueUnitIds;
-  request.status = 'Reserved';
+  request.fulfilledUnits = uniqueUnitIds.length;
+  request.status = request.fulfilledUnits >= request.quantityUnits ? 'Reserved' : 'Partially Fulfilled';
   request.updatedAt = now;
   request.timeline.push({
-    status: 'Reserved',
+    status: request.status,
     updatedAt: now,
     note: notes || `Allocated and reserved ${uniqueUnitIds.length} verified unit(s) (${uniqueUnitIds.join(', ')}) for requisition.`,
     actor: req.user?.name || 'Blood Bank Staff'
+  });
+
+  // Emit Authoritative In-App Notification to Requesting Hospital
+  db.notifications.unshift({
+    id: `NOTIF-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+    userId: request.hospitalId,
+    title: `Requisition ${request.id} Units Allocated`,
+    message: `${uniqueUnitIds.length} unit(s) of ${request.bloodGroup} ${request.component} have been allocated and reserved by ${bb?.bloodBankName || bb?.name || 'Blood Bank'}.`,
+    type: 'request_update',
+    priority: request.urgency === 'Emergency' ? 'urgent' : 'high',
+    read: false,
+    createdAt: now,
+    link: '/hospital/requests'
   });
 
   db.saveSnapshot();
@@ -2191,6 +2612,7 @@ export const releaseAllocatedUnits = async (req: AuthenticatedRequest, res: Resp
   }
 
   const now = new Date().toISOString();
+  request.fulfilledUnits = 0;
   request.status = 'Sample Submitted';
   request.updatedAt = now;
   request.timeline.push({
@@ -2199,6 +2621,21 @@ export const releaseAllocatedUnits = async (req: AuthenticatedRequest, res: Resp
     note: reason ? `Allocation released: ${reason}` : `Released ${releasedUnits.length} unit(s) back to regional available stock.`,
     actor: req.user?.name || 'Blood Bank Staff'
   });
+
+  // Emit Notification to Hospital
+  db.notifications.unshift({
+    id: `NOTIF-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+    userId: request.hospitalId,
+    title: `Requisition ${request.id} Allocation Released`,
+    message: `Allocated units for requisition ${request.id} (${request.bloodGroup} ${request.component}) were released back to stock. Reason: ${reason || 'Operational adjustment'}.`,
+    type: 'request_update',
+    priority: 'medium',
+    read: false,
+    createdAt: now,
+    link: '/hospital/requests'
+  });
+
+  db.saveSnapshot();
 
   res.json({
     success: true,
@@ -2631,6 +3068,15 @@ export const getReports = async (req: AuthenticatedRequest, res: Response) => {
   const issued = bankUnits.filter(u => u.availability === 'Issued').length;
   const expired = bankUnits.filter(u => u.availability === 'Expired').length;
 
+  const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
+  const totalCollectionsThisMonth = db.bloodCollections.filter(c => c.bloodBankId === bankId && c.collectionDate >= startOfMonth).length;
+  const bankRequests = db.bloodRequests.filter(r => r.bloodBankId === bankId);
+  const totalRequestsThisMonth = bankRequests.filter(r => (r.createdAt || '').slice(0, 10) >= startOfMonth).length;
+  const fulfilledRequests = bankRequests.filter(r => r.status === 'Fulfilled' || r.status === 'Partially Fulfilled');
+  const fulfillmentRate = bankRequests.length > 0
+    ? `${Math.round((fulfilledRequests.length / bankRequests.length) * 100)}%`
+    : '100%';
+
   res.json({
     success: true,
     summary: {
@@ -2638,9 +3084,9 @@ export const getReports = async (req: AuthenticatedRequest, res: Response) => {
       available,
       issued,
       expired,
-      fulfillmentRate: '94.2%',
-      totalCollectionsThisMonth: db.bloodCollections.filter(c => c.bloodBankId === bankId).length || 124,
-      totalRequestsThisMonth: db.bloodRequests.filter(r => r.bloodBankId === bankId).length || 88
+      fulfillmentRate,
+      totalCollectionsThisMonth,
+      totalRequestsThisMonth
     },
     inventoryByGroup: db.getAvailableInventoryByGroup(bankId)
   });
@@ -3347,4 +3793,152 @@ export const getPotentiallyExposedInventory = async (req: AuthenticatedRequest, 
     reviewNotice: 'Safety Protocol Notice: Temperature excursion logged. In accordance with blood-bank quality assurance standards, these units are flagged for clinical QA review. Units are NOT automatically discarded or released; an authorized medical director or QA supervisor must complete formal quarantine review.'
   });
 };
+
+// =========================================================
+// ORGANIZATIONAL CAMP REQUEST COORDINATION
+// =========================================================
+
+/**
+ * Get Camp Requests for Blood Bank
+ */
+export const getBloodBankCampRequests = async (req: AuthenticatedRequest, res: Response) => {
+  await safeSupabaseSync();
+  const bb = resolveBloodBank(req);
+  const bankId = bb?.id || req.user?.id;
+  const bankCity = (bb?.city || '').toLowerCase();
+
+  // Requests directed to this blood bank OR open submitted requests in the same city/region
+  const requests = db.campRequests.filter(r => 
+    r.bloodBankId === bankId || 
+    (!r.bloodBankId && (r.status === 'Submitted' || (bankCity && r.city.toLowerCase() === bankCity)))
+  );
+
+  res.json({
+    success: true,
+    count: requests.length,
+    requests
+  });
+};
+
+/**
+ * Accept Camp Request and Schedule Donation Camp
+ */
+export const acceptCampRequest = async (req: AuthenticatedRequest, res: Response) => {
+  await safeSupabaseSync();
+  const bb = resolveBloodBank(req);
+  const bankId = bb?.id || req.user?.id;
+  const bankName = bb?.bloodBankName || bb?.name || 'Regional Blood Center';
+  const { id } = req.params;
+  const { scheduledDate, timeSlot, notes } = req.body;
+
+  const campReq = db.campRequests.find(r => r.id === id);
+  if (!campReq) {
+    return res.status(404).json({ success: false, error: `Camp request ${id} not found.` });
+  }
+
+  if (campReq.status === 'Approved' || campReq.status === 'Scheduled') {
+    return res.status(400).json({ success: false, error: 'Camp request is already approved/scheduled.' });
+  }
+
+  if (campReq.status === 'Cancelled' || campReq.status === 'Rejected') {
+    return res.status(400).json({ success: false, error: `Cannot accept a ${campReq.status.toLowerCase()} camp request.` });
+  }
+
+  const campDate = scheduledDate || campReq.proposedDate;
+  const campTime = timeSlot || campReq.preferredTimeSlot || '09:00 AM - 05:00 PM';
+
+  // Create scheduled donation camp record
+  const newCamp: DonationCamp = {
+    id: `CAMP-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+    title: `${campReq.organizationName} Blood Donation Drive`,
+    organizer: campReq.organizationName,
+    bloodBankId: bankId || 'bb-1',
+    location: campReq.venueAddress,
+    city: campReq.city,
+    address: campReq.venueAddress,
+    startDate: campDate,
+    endDate: campDate,
+    timeSlot: campTime,
+    targetUnits: campReq.expectedDonations || campReq.estimatedParticipants || 50,
+    registeredCount: 0,
+    contactPhone: campReq.organizerPhone,
+    description: `Community donation drive organized in partnership with ${campReq.organizationName} (${campReq.organizerName}). Facilities: ${campReq.availableFacilities || 'Standard indoor venue'}.${notes ? ` Coordination note: ${notes}` : ''}`,
+    status: 'Planned'
+  };
+
+  db.donationCamps.unshift(newCamp);
+
+  // Update camp request status
+  campReq.status = 'Approved';
+  campReq.bloodBankId = bankId;
+  campReq.bloodBankName = bankName;
+  campReq.scheduledCampId = newCamp.id;
+  campReq.statusNote = notes ? `Approved by ${bankName}. Note: ${notes}` : `Approved by ${bankName}. Scheduled for ${campDate}.`;
+  campReq.updatedAt = new Date().toISOString();
+
+  // Dispatch notification to requesting donor
+  db.notifications.unshift({
+    id: `notif-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    userId: campReq.donorId,
+    title: 'Camp Request Approved! 🎉',
+    message: `Your donation camp request for ${campReq.organizationName} on ${campDate} has been approved and scheduled by ${bankName}!`,
+    type: 'camp',
+    priority: 'medium',
+    read: false,
+    createdAt: new Date().toISOString()
+  });
+
+  db.saveSnapshot();
+
+  res.json({
+    success: true,
+    message: 'Camp request approved and donation drive scheduled successfully!',
+    campRequest: campReq,
+    scheduledCamp: newCamp
+  });
+};
+
+/**
+ * Reject Camp Request
+ */
+export const rejectCampRequest = async (req: AuthenticatedRequest, res: Response) => {
+  await safeSupabaseSync();
+  const bb = resolveBloodBank(req);
+  const bankId = bb?.id || req.user?.id;
+  const bankName = bb?.bloodBankName || bb?.name || 'Regional Blood Center';
+  const { id } = req.params;
+  const { reason } = req.body;
+
+  const campReq = db.campRequests.find(r => r.id === id);
+  if (!campReq) {
+    return res.status(404).json({ success: false, error: `Camp request ${id} not found.` });
+  }
+
+  campReq.status = 'Rejected';
+  campReq.bloodBankId = bankId;
+  campReq.bloodBankName = bankName;
+  campReq.statusNote = reason || 'Declined by blood center due to scheduling or logistical capacity constraints.';
+  campReq.updatedAt = new Date().toISOString();
+
+  // Dispatch notification to requesting donor
+  db.notifications.unshift({
+    id: `notif-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    userId: campReq.donorId,
+    title: 'Camp Request Update',
+    message: `Your camp request for ${campReq.organizationName} could not be accommodated by ${bankName}. Reason: ${campReq.statusNote}`,
+    type: 'camp',
+    priority: 'medium',
+    read: false,
+    createdAt: new Date().toISOString()
+  });
+
+  db.saveSnapshot();
+
+  res.json({
+    success: true,
+    message: 'Camp request declined.',
+    campRequest: campReq
+  });
+};
+
 

@@ -128,8 +128,13 @@ export interface DonorProfile extends User {
     campReminders: boolean;
     eligibilityAlerts: boolean;
   };
-  bloodGroupVerificationStatus?: 'Unverified' | 'Pending Verification' | 'Verified';
+  bloodGroupVerificationStatus?: 'Unverified' | 'Pending Verification' | 'Verified' | 'Rejected';
+  verificationStatus?: 'Unverified' | 'Pending Verification' | 'Verified' | 'Rejected';
   bloodGroupProofDocUrl?: string;
+  verifiedAt?: string;
+  verifiedBy?: string;
+  verifiedByName?: string;
+  rejectionReason?: string;
   travelRadiusKm?: number;
   pauseInvitations?: boolean;
 }
@@ -199,6 +204,8 @@ export interface TestingRecord {
   testedBy: string;
   testingDate: string;
   notes?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
 }
 
 export interface BloodRequest {
@@ -477,6 +484,11 @@ export interface CampRequest {
   // Consent
   isAuthorizedRepresentative: boolean;
   agreedToTerms: boolean;
+
+  // Partner Blood Bank
+  bloodBankId?: string;
+  bloodBankName?: string;
+  scheduledCampId?: string;
 
   // Status
   status: CampRequestStatus;

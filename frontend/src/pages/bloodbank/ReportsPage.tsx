@@ -30,13 +30,13 @@ export const ReportsPage: React.FC = () => {
   };
 
   const summary = reportsData?.summary || {
-    totalUnits: 58,
-    available: 48,
-    issued: 6,
-    expired: 1,
-    fulfillmentRate: '94.2%',
-    totalCollectionsThisMonth: 124,
-    totalRequestsThisMonth: 88
+    totalUnits: 0,
+    available: 0,
+    issued: 0,
+    expired: 0,
+    fulfillmentRate: '0%',
+    totalCollectionsThisMonth: 0,
+    totalRequestsThisMonth: 0
   };
 
   return (

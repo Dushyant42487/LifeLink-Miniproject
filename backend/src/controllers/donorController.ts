@@ -4,12 +4,15 @@ import { db } from '../models/store';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { EmergencyResponse } from '../models/types';
 import { isValidCoordinate, parseCoordinates, calcHaversineKm } from '../utils/geo';
+import { syncDonorAuthoritativeEligibility } from '../services/donorEligibilityService';
 
 export const getDonorProfile = async (req: AuthenticatedRequest, res: Response) => {
   await safeSupabaseSync();
 
   const donor = db.donors.find(d => d.id === req.user?.id);
-  if (!donor)  return res.status(404).json({ success: false, error: 'Donor profile not found' });
+  if (!donor) return res.status(404).json({ success: false, error: 'Donor profile not found' });
+  
+  syncDonorAuthoritativeEligibility(donor);
   const { passwordHash, ...data } = donor;
 
   res.json({ success: true, donor: data });
@@ -19,9 +22,12 @@ export const updateDonorProfile = async (req: AuthenticatedRequest, res: Respons
   await safeSupabaseSync();
 
   const donor = db.donors.find(d => d.id === req.user?.id);
-  if (!donor)  return res.status(404).json({ success: false, error: 'Donor profile not found' });
+  if (!donor) return res.status(404).json({ success: false, error: 'Donor profile not found' });
 
   const { name, phone, address, city, state, postalCode, latitude, longitude, emergencyContact, notificationPreferences, weightKg, travelRadiusKm, pauseInvitations } = req.body;
+
+  // Security: Ignore client-supplied eligibility flags and verification status overrides
+  // isEligible, bloodGroupVerificationStatus, verificationStatus, verifiedBy, verifiedAt cannot be modified by donor
 
   if (latitude !== undefined || longitude !== undefined) {
     if (latitude === null && longitude === null) {
@@ -49,6 +55,9 @@ export const updateDonorProfile = async (req: AuthenticatedRequest, res: Respons
   if (travelRadiusKm !== undefined) donor.travelRadiusKm = Number(travelRadiusKm);
   if (pauseInvitations !== undefined) donor.pauseInvitations = Boolean(pauseInvitations);
 
+  // Recalculate authoritative eligibility after updates (e.g. weight changes)
+  syncDonorAuthoritativeEligibility(donor);
+
   const { passwordHash, ...data } = donor;
   db.saveSnapshot();
 
@@ -61,84 +70,12 @@ export const getDonorEligibility = async (req: AuthenticatedRequest, res: Respon
   const donor = db.donors.find(d => d.id === req.user?.id);
   if (!donor) return res.status(404).json({ success: false, error: 'Donor profile not found' });
 
-  const COOL_OFF_DAYS_WHOLE_BLOOD = 56;
-  const COOL_OFF_DAYS_PLATELETS = 14;
-
-  // Fallback to latest collectionDate from db.bloodUnits if lastDonationDate is missing
-  let lastDonation = donor.lastDonationDate;
-  const donorUnits = db.bloodUnits.filter(u => u.donorId === donor.id);
-  if (!lastDonation && donorUnits.length > 0) {
-    const sortedDates = donorUnits
-      .map(u => u.collectionDate)
-      .filter(Boolean)
-      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
-    if (sortedDates.length > 0) {
-      lastDonation = sortedDates[0];
-    }
-  }
-
-  let daysSinceLastDonation: number | null = null;
-  let daysUntilEligibleWholeBlood = 0;
-  let daysUntilEligiblePlatelets = 0;
-  let nextEligibleDateWholeBlood: string | null = null;
-  let nextEligibleDatePlatelets: string | null = null;
-  let isEligibleWholeBlood = true;
-  let isEligiblePlatelets = true;
-
-  if (lastDonation) {
-    const lastDate = new Date(lastDonation);
-    const today = new Date();
-
-    if (!isNaN(lastDate.getTime())) {
-      // Clamp future dates to today
-      const diffMs = Math.max(0, today.getTime() - lastDate.getTime());
-      daysSinceLastDonation = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-      if (daysSinceLastDonation < COOL_OFF_DAYS_WHOLE_BLOOD) {
-        daysUntilEligibleWholeBlood = COOL_OFF_DAYS_WHOLE_BLOOD - daysSinceLastDonation;
-        isEligibleWholeBlood = false;
-        const nextDate = new Date(lastDate.getTime() + COOL_OFF_DAYS_WHOLE_BLOOD * 24 * 60 * 60 * 1000);
-        nextEligibleDateWholeBlood = nextDate.toISOString().split('T')[0];
-      }
-
-      if (daysSinceLastDonation < COOL_OFF_DAYS_PLATELETS) {
-        daysUntilEligiblePlatelets = COOL_OFF_DAYS_PLATELETS - daysSinceLastDonation;
-        isEligiblePlatelets = false;
-        const nextDate = new Date(lastDate.getTime() + COOL_OFF_DAYS_PLATELETS * 24 * 60 * 60 * 1000);
-        nextEligibleDatePlatelets = nextDate.toISOString().split('T')[0];
-      }
-    } else {
-      lastDonation = undefined;
-    }
-  }
-
-  // Weight check (< 50kg defers)
-  const weight = Number(donor.weightKg) || 70;
-  let weightDeferral = weight < 50 ? 'Weight must be at least 50 kg for blood donation.' : null;
-  const isOverallEligible = isEligibleWholeBlood && !weightDeferral;
+  // Use authoritative LifeLink eligibility service (enforces verification requirement)
+  const eligibility = syncDonorAuthoritativeEligibility(donor);
 
   res.json({
     success: true,
-    eligibility: {
-      isEligible: isOverallEligible,
-      bloodGroup: donor.bloodGroup || 'O+',
-      lastDonationDate: lastDonation || 'No previous recorded donation',
-      daysSinceLastDonation,
-      wholeBlood: {
-        isEligible: isEligibleWholeBlood && !weightDeferral,
-        coolOffDaysTotal: COOL_OFF_DAYS_WHOLE_BLOOD,
-        daysRemaining: Math.max(0, daysUntilEligibleWholeBlood),
-        nextEligibleDate: nextEligibleDateWholeBlood || 'Eligible Now'
-      },
-      platelets: {
-        isEligible: isEligiblePlatelets && !weightDeferral,
-        coolOffDaysTotal: COOL_OFF_DAYS_PLATELETS,
-        daysRemaining: Math.max(0, daysUntilEligiblePlatelets),
-        nextEligibleDate: nextEligibleDatePlatelets || 'Eligible Now'
-      },
-      deferralReason: weightDeferral || (!isEligibleWholeBlood ? `Within ${COOL_OFF_DAYS_WHOLE_BLOOD}-day cool-off period.` : undefined),
-      disclaimer: 'LifeLink provides calculated eligibility guidelines. Final medical clearance, hemoglobin testing, and donor suitability must be performed by authorized medical staff prior to collection.'
-    }
+    eligibility
   });
 };
 
@@ -253,7 +190,9 @@ export const createCampRequest = async (req: AuthenticatedRequest, res: Response
     availableFacilities,
     additionalNotes,
     isAuthorizedRepresentative,
-    agreedToTerms
+    agreedToTerms,
+    bloodBankId,
+    bloodBankName
   } = req.body;
 
   // Validation
@@ -263,6 +202,16 @@ export const createCampRequest = async (req: AuthenticatedRequest, res: Response
 
   if (!isAuthorizedRepresentative || !agreedToTerms) {
     return res.status(400).json({ success: false, error: 'You must confirm authorization and agree to the coordination terms.' });
+  }
+
+  let assignedBankId = bloodBankId || undefined;
+  let assignedBankName = bloodBankName || undefined;
+
+  if (assignedBankId) {
+    const bb = db.bloodBanks.find(b => b.id === assignedBankId);
+    if (bb) {
+      assignedBankName = bb.bloodBankName || bb.name;
+    }
   }
 
   const newRequest = {
@@ -289,12 +238,27 @@ export const createCampRequest = async (req: AuthenticatedRequest, res: Response
     additionalNotes: additionalNotes?.trim(),
     isAuthorizedRepresentative: Boolean(isAuthorizedRepresentative),
     agreedToTerms: Boolean(agreedToTerms),
+    bloodBankId: assignedBankId,
+    bloodBankName: assignedBankName,
     status: 'Submitted' as const,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
 
   db.campRequests.unshift(newRequest);
+
+  // Dispatch notification to the target blood bank or all blood banks
+  db.notifications.unshift({
+    id: `notif-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    userId: assignedBankId || 'role:blood_bank',
+    title: 'New Blood Camp Request',
+    message: `${newRequest.organizationName} submitted a camp request for ${newRequest.proposedDate} in ${newRequest.city}.`,
+    type: 'camp',
+    priority: 'medium',
+    read: false,
+    createdAt: new Date().toISOString()
+  });
+
   db.saveSnapshot();
 
   res.status(201).json({
@@ -334,6 +298,14 @@ export const cancelCampRequest = async (req: AuthenticatedRequest, res: Response
 export const registerForCamp = async (req: AuthenticatedRequest, res: Response) => {
   const donor = db.donors.find(d => d.id === req.user?.id);
   if (!donor) return res.status(404).json({ success: false, error: 'Donor profile not found' });
+
+  // Disallow registration if donor has active clinical disqualifications (e.g. weight < 50kg)
+  if (donor.weightKg && Number(donor.weightKg) < 50) {
+    return res.status(422).json({
+      success: false,
+      error: `Cannot register for donation camp. Donor weight (${donor.weightKg} kg) is below the minimum clinical requirement (50 kg).`
+    });
+  }
 
   const { id: campId } = req.params;
   const camp = db.donationCamps.find(c => c.id === campId);
@@ -432,6 +404,7 @@ export const markNotificationAsRead = async (req: AuthenticatedRequest, res: Res
   const notif = db.notifications.find(n => n.id === id);
   if (notif) {
     notif.read = true;
+    db.saveSnapshot();
   }
   res.json({ success: true });
 };
@@ -443,6 +416,7 @@ export const markAllNotificationsAsRead = async (req: AuthenticatedRequest, res:
       n.read = true;
     }
   });
+  db.saveSnapshot();
   res.json({ success: true, message: 'All notifications marked as read.' });
 };
 
@@ -451,18 +425,27 @@ export const verifyBloodGroup = async (req: AuthenticatedRequest, res: Response)
   const donor = db.donors.find(d => d.id === req.user?.id);
   if (!donor) return res.status(404).json({ success: false, error: 'Donor profile not found' });
 
-  const { documentType, documentNumber, fileUrl } = req.body;
+  const { documentType, documentNumber } = req.body;
+  const fileUrl = req.body.fileUrl || req.body.bloodGroupProofDocUrl;
   if (!documentType || !fileUrl) {
     return res.status(400).json({ success: false, error: 'Please provide document type and upload proof.' });
   }
 
   donor.bloodGroupVerificationStatus = 'Pending Verification';
+  donor.verificationStatus = 'Pending Verification';
   donor.bloodGroupProofDocUrl = fileUrl;
+  (donor as any).proofDocumentType = documentType;
+  if (documentNumber) (donor as any).proofDocumentNumber = documentNumber;
+
+  // Sync authoritative eligibility: status remains Pending/ineligible until blood bank staff approval
+  const assessment = syncDonorAuthoritativeEligibility(donor);
+  db.saveSnapshot();
 
   res.json({
     success: true,
     message: 'Blood group verification document submitted successfully. An authorized blood bank reviewer will verify your proof within 24-48 hours.',
-    status: 'Pending Verification'
+    status: 'Pending Verification',
+    eligibility: assessment
   });
 };
 
@@ -673,6 +656,10 @@ export const savePrescreening = async (req: AuthenticatedRequest, res: Response)
 
   (donor as any).prescreeningResult = prescreening;
 
+  // Re-assess authoritative eligibility against medical review flags
+  syncDonorAuthoritativeEligibility(donor);
+  db.saveSnapshot();
+
   res.json({
     success: true,
     message: 'Pre-screening questionnaire submitted successfully.',
@@ -709,6 +696,8 @@ export const getDigitalPass = async (req: AuthenticatedRequest, res: Response) =
   const donor = db.donors.find(d => d.id === req.user?.id);
   if (!donor) return res.status(404).json({ success: false, error: 'Donor profile not found' });
 
+  const assessment = syncDonorAuthoritativeEligibility(donor);
+
   res.json({
     success: true,
     pass: {
@@ -717,7 +706,10 @@ export const getDigitalPass = async (req: AuthenticatedRequest, res: Response) =
       email: donor.email,
       phone: donor.phone,
       bloodGroup: donor.bloodGroup || 'O+',
-      verificationStatus: donor.bloodGroupVerificationStatus || 'Verified',
+      verificationStatus: assessment.verificationStatus,
+      bloodGroupVerificationStatus: assessment.verificationStatus,
+      isEligible: assessment.isEligible,
+      deferralReason: assessment.deferralReason,
       city: donor.city,
       qrToken: `LIFELINK-PASS-${donor.id}-${Date.now().toString(36)}`,
       issuedAt: new Date().toISOString(),

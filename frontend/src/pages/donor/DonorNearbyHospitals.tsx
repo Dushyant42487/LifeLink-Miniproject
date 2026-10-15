@@ -4,6 +4,7 @@ import { donorApi } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { NearbyHospital } from '../../types';
 import { OSMMap, MapMarker } from '../../components/common/OSMMap';
+import { LocationSearchInput, LocationSuggestion } from '../../components/common/LocationSearchInput';
 import { isValidCoordinate } from '../../utils/geo';
 import { 
   Building2, 
@@ -37,6 +38,19 @@ export const DonorNearbyHospitals: React.FC = () => {
   const [geoLocating, setGeoLocating] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const handleSelectCustomLocation = (suggestion: LocationSuggestion) => {
+    if (suggestion.lat && suggestion.lng) {
+      setCurrentCoords({ lat: suggestion.lat, lng: suggestion.lng });
+      setLocationSource('current');
+      setDonorLocationMissing(false);
+      fetchHospitals({
+        lat: suggestion.lat,
+        lng: suggestion.lng,
+        radius
+      });
+    }
+  };
 
   useEffect(() => {
     initDonorDiscovery();
@@ -222,24 +236,31 @@ export const DonorNearbyHospitals: React.FC = () => {
 
         {/* Location Origin Controls */}
         <div className="flex flex-wrap items-center gap-2">
+          <div className="w-64 sm:w-72">
+            <LocationSearchInput
+              placeholder="Search city, blood bank, or hospital..."
+              onSelectLocation={handleSelectCustomLocation}
+            />
+          </div>
+
           {isValidCoordinate(profile?.latitude, profile?.longitude) && (
             <button
               onClick={handleUseSavedProfile}
-              className={`px-3 py-1.5 text-xs font-bold rounded-xl border transition-colors flex items-center space-x-1.5 cursor-pointer ${
+              className={`px-3 py-2 text-xs font-bold rounded-xl border transition-colors flex items-center space-x-1.5 cursor-pointer ${
                 locationSource === 'profile'
                   ? 'bg-rose-50 text-rose-700 border-rose-200'
                   : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
               }`}
             >
               <MapPin className="w-3.5 h-3.5" />
-              <span>Saved Profile Location</span>
+              <span>Saved Profile</span>
             </button>
           )}
 
           <button
             onClick={handleUseCurrentLocation}
             disabled={geoLocating}
-            className={`px-3 py-1.5 text-xs font-bold rounded-xl border transition-colors flex items-center space-x-1.5 cursor-pointer disabled:opacity-50 ${
+            className={`px-3 py-2 text-xs font-bold rounded-xl border transition-colors flex items-center space-x-1.5 cursor-pointer disabled:opacity-50 ${
               locationSource === 'current'
                 ? 'bg-rose-600 text-white border-rose-600'
                 : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'

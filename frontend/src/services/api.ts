@@ -131,10 +131,10 @@ export const donorApi = {
   getCampRequests: () => apiFetch('/donors/camp-requests'),
   cancelCampRequest: (id: string) => apiFetch(`/donors/camp-requests/${id}/cancel`, { method: 'PATCH' }),
 
-  // Notifications
-  getNotifications: () => apiFetch('/donors/notifications'),
-  markNotificationRead: (id: string) => apiFetch(`/donors/notifications/${id}/read`, { method: 'PATCH' }),
-  markAllNotificationsRead: () => apiFetch('/donors/notifications/read-all', { method: 'PATCH' }),
+  // Notifications (delegates to universal notifications endpoint)
+  getNotifications: () => apiFetch('/notifications'),
+  markNotificationRead: (id: string) => apiFetch(`/notifications/${id}/read`, { method: 'PATCH' }),
+  markAllNotificationsRead: () => apiFetch('/notifications/read-all', { method: 'PATCH' }),
 
   // Location Search
   searchLocations: (q: string) => apiFetch(`/donors/location-search?q=${encodeURIComponent(q)}`),
@@ -247,5 +247,30 @@ export const bloodBankApi = {
   confirmDispatch: (id: string, data?: { courierReference?: string; notes?: string }) => 
     apiFetch(`/blood-bank/requests/${id}/confirm-dispatch`, { method: 'POST', body: JSON.stringify(data || {}) }),
   getDispatchSlip: (id: string) => apiFetch(`/blood-bank/dispatches/${id}/slip`),
-  getAllocationMatrix: () => apiFetch('/blood-bank/allocation-matrix')
+  getAllocationMatrix: () => apiFetch('/blood-bank/allocation-matrix'),
+
+  // Organizational Camp Requests Coordination
+  getCampRequests: () => apiFetch('/blood-bank/camp-requests'),
+  acceptCampRequest: (id: string, data?: { scheduledDate?: string; timeSlot?: string; notes?: string }) => 
+    apiFetch(`/blood-bank/camp-requests/${id}/accept`, { method: 'POST', body: JSON.stringify(data || {}) }),
+  rejectCampRequest: (id: string, data?: { reason?: string }) => 
+    apiFetch(`/blood-bank/camp-requests/${id}/reject`, { method: 'POST', body: JSON.stringify(data || {}) }),
+
+  // Laboratory Infectious Disease Screening
+  getTestingRecords: (params?: { status?: string; filter?: string; unitId?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.status) q.set('status', params.status);
+    if (params?.filter) q.set('filter', params.filter);
+    if (params?.unitId) q.set('unitId', params.unitId);
+    const queryStr = q.toString() ? `?${q.toString()}` : '';
+    return apiFetch(`/blood-bank/testing${queryStr}`);
+  },
+  updateTestingRecord: (id: string, data: any) => 
+    apiFetch(`/blood-bank/testing/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+};
+
+export const notificationsApi = {
+  getNotifications: () => apiFetch('/notifications'),
+  markRead: (id: string) => apiFetch(`/notifications/${id}/read`, { method: 'PATCH' }),
+  markAllRead: () => apiFetch('/notifications/read-all', { method: 'PATCH' })
 };
