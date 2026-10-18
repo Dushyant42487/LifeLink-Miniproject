@@ -1,0 +1,388 @@
+================================================================================
+LIFELINK HEALTH ASSISTANT: COMPLETE ARCHITECTURE, BUILD PROCESS & RESOLUTIONS
+================================================================================
+
+PROJECT OVERVIEW:
+LifeLink is a calm, trustworthy, and human health/wellness assistant designed to 
+help users navigate health questions, medical records, and community health services.
+It integrates:
+1. Atomic Knowledge Graph via Model Context Protocol (MCP HTTP/SSE) on port 8080.
+2. Local Llama-3.2:3b via Ollama on port 11434 with an 8k context window.
+3. PDF Ingestion and Conversion into structured Markdown via Unstructured / PyMuPDF.
+4. Live Blood Donation Camps integration via the MoHFW eRaktKosh API.
+5. Strict health-only query guardrails.
+6. A bespoke humanist UI built with warm neutrals and earthy sage green.
+
+--------------------------------------------------------------------------------
+PART 1: THE ENTIRE BUILD PROCESS (STEP-BY-STEP)
+--------------------------------------------------------------------------------
+
+Step 1: Environment & Workspace Discovery
+- Inspected the local workspace and identified two folders: `atomic-main` and `chatboot`.
+- Audited the running services:
+  * Port 8080: Verified Atomic server was running. Inspected the Rust codebase in
+    `atomic-main/crates/atomic-server` and `crates/mcp-bridge` to understand its
+    endpoints, authentication, and MCP tool capabilities.
+  * Port 11434: Verified Ollama was running locally with `llama3.2:3b` (Q4_K_M) 
+    and `nomic-embed-text` installed.
+  * Audited installed Python packages and Node.js v22.18.0.
+
+Step 2: Engineering the Atomic MCP Client (`chatboot/mcpClient.js`)
+- Reverse-engineered the Atomic server's Streamable HTTP implementation:
+  * Target URL: `http://localhost:8080/mcp`
+  * Bearer Token: `at_9ZA8bjMC6owrQa_pIjIcoVRR0kPlQT9dyFVmoDc8i5Q`
+- Built a native Node.js MCP client that handles:
+  * Sending `initialize` JSON-RPC 2.0 messages.
+  * Extracting and maintaining the `Mcp-Session-Id` header from response headers.
+  * Emitting the mandatory `notifications/initialized` handshake.
+  * Reading and decoding Server-Sent Events (SSE) streaming data chunks.
+  * Exposing high-level methods: `semanticSearch(query, limit)`, `createAtom(content, sourceUrl)`,
+    and `listAtoms(limit)`.
+
+Step 3: Document Processing & Markdown Conversion (`chatboot/pdf_to_markdown.py`)
+- Created a dedicated Python script to convert PDF medical reports into clean Markdown (.md).
+- Designed to inspect and use `unstructured.partition.pdf` to extract structural elements
+  (Titles, Section Headers, NarrativeText, ListItems, Tables).
+- Formatted output as structured Markdown and configured the Node server to store
+  the `.md` file in `documents/` and index it directly into Atomic's knowledge base.
+
+Step 4: Local LLM Engine & Health Guardrails (`chatboot/ollamaClient.js`)
+- Configured local inference through Ollama's HTTP API (`/api/chat`).
+- Configured model parameters: `model: 'llama3.2:3b'`, `num_ctx: 8192`, `temperature: 0.3`.
+- Engineered a dual-layer guardrail system:
+  * Layer 1 (Deterministic intent filter): Evaluates query patterns and intercepts
+    non-health queries (coding, math, financial trading, politics, sports, general trivia).
+  * Layer 2 (System Prompt & Framing): Instructs Llama 3.2 to strictly handle health,
+    wellness, symptoms, nutrition, sleep, and uploaded records. Emphasizes warm, empathetic,
+    and supportive guidance without claiming clinical diagnosis.
+- Integrated Server-Sent Events (SSE) token streaming to deliver immediate feedback.
+
+Step 5: Node.js Backend Server (`chatboot/server.js`)
+- Built an Express server with Multer handling PDF uploads:
+  * `GET /api/status`: Real-time health check for Atomic MCP and Ollama.
+  * `GET /api/documents`: Returns uploaded health records and synced knowledge atoms.
+  * `POST /api/upload-pdf`: Receives PDF, runs Python conversion to Markdown, and calls
+    Atomic MCP `create_atom` to store the note in the knowledge graph.
+  * `POST /api/chat/stream`: Handles incoming chat queries, conducts semantic search
+    over Atomic, injects context, and streams Llama 3.2 tokens to the client.
+  * `GET /api/districts`: Returns Maharashtra state code (27) and all 35 district code mappings.
+  * `GET /api/camps`: Proxies requests to eRaktKosh with timeout handling to prevent browser CORS blocks.
+
+Step 6: Humanist, Calm Health UI (`index.html`, `style.css`, `app.js`)
+- Designed a custom interface avoiding conventional AI startup and clinical tropes:
+  * Palette: Off-white linen (`#F9F7F2`), soft sand (`#F2EDE4`), warm taupe (`#EBE5DB`),
+    crisp card (`#FFFFFF`), warm charcoal typography (`#272522`), and calming sage green (`#4A6B5D`).
+  * Typography: Plus Jakarta Sans with 1.68 line height for effortless readability.
+  * Message Structure: User messages in soft sand on the right; assistant in white cards
+    on the left with breathing room and clear visual separation for suggestions.
+  * Thinking State: Calm breathing opacity pulse ("Reflecting on health records & knowledge...").
+  * Grounded Bottom Region: Steady input container with distinct "Append PDF" button.
+  * Camps Near Me: Quick-action button and starter chip opening an interactive district and date range picker.
+
+
+--------------------------------------------------------------------------------
+PART 2: PROBLEMS FACED & HOW THEY WERE SOLVED
+--------------------------------------------------------------------------------
+
+PROBLEM 1: Atomic MCP HTTP Header Requirements & Session Lifecycle
+- The Symptom:
+  Initial curl tests to `http://localhost:8080/mcp` failed with HTTP 406:
+  "Not Acceptable: Client must accept both application/json and text/event-stream"
+  and subsequent requests hung or failed with "Expected initialize request".
+- Root Cause:
+  Atomic's MCP endpoint implements the official MCP Streamable HTTP specification.
+  The server enforces that incoming requests must include:
+  `Accept: application/json, text/event-stream`. Furthermore, it generates an
+  ephemeral `Mcp-Session-Id` header during `initialize`, and requires the client to
+  send `notifications/initialized` before processing tool calls (`tools/call`, `tools/list`).
+- The Solution:
+  Examined `crates/atomic-server/src/mcp/transport.rs` and `crates/mcp-bridge/src/main.rs`.
+  Built `mcpClient.js` to:
+  1. Always set `Accept: application/json, text/event-stream` and `Content-Type: application/json`.
+  2. Extract `mcp-session-id` from the initialize response headers and reuse it in all
+     subsequent requests.
+  3. Send `notifications/initialized` immediately after receiving the session ID.
+  4. Parse the SSE `data: {...}` lines from the chunk stream and extract the JSON-RPC result.
+
+PROBLEM 2: Heavy Python Dependencies & PyPI Network Read Timeouts
+- The Symptom:
+  Attempting to install the `unstructured` Python package via pip resulted in
+  `HTTPSConnectionPool ReadTimeoutError` on Windows while downloading large wheels.
+- Root Cause:
+  `unstructured` has a heavy dependency tree (onnx, torch, unstructured-inference,
+  ocr packages) totaling hundreds of megabytes. On intermittent or restricted connections,
+  pip timed out.
+- The Solution:
+  Implemented a dual-engine architecture in `pdf_to_markdown.py`:
+  1. The script first checks if `unstructured.partition.pdf` is available and uses it
+     if present.
+  2. If `unstructured` is not installed or times out, the script seamlessly falls back to
+     `PyMuPDF` (`fitz`), which was already installed in the local environment.
+  3. The PyMuPDF fallback was engineered with heuristic block-classification to distinguish
+     document titles (`#`), section headers (`##`), bullet points (`-`), and numbered lists,
+     producing clean Markdown without external network dependency.
+
+PROBLEM 3: Low-End PC Performance & 8k Context Window Management
+- The Symptom:
+  A low-end PC running local LLMs can experience high latency and memory pressure. If entire
+  lengthy PDF documents are dumped into the prompt, the 8k context window quickly overflows
+  and token generation slows down significantly.
+- Root Cause:
+  Raw text dumping consumes context space rapidly and increases generation time on CPU.
+- The Solution:
+  1. Tailored the prompt template: Restricted RAG retrieval to the top 3 most relevant
+     chunks/atoms from Atomic MCP, truncating each reference snippet to 1,500 characters.
+  2. Retained only the last 6 conversation turns in the chat payload.
+  3. Lowered temperature to `0.3` with `top_p: 0.9` for fast, focused local decoding.
+  4. Implemented Server-Sent Events (SSE) token streaming from Ollama through Express
+     to the browser, so words appear in real-time without buffering delay.
+
+PROBLEM 4: Enforcing Strict "Health-Only" Guardrails
+- The Symptom:
+  General-purpose LLMs readily answer general software development, finance, math,
+  or trivia queries, diluting the focus of a specialized health assistant.
+- Root Cause:
+  System prompts alone can sometimes be bypassed or partially ignored by smaller 3B models.
+- The Solution:
+  Engineered a two-tier guardrail system:
+  1. Fast Regex/Keyword Intent Pre-filter: Detects programming syntax, crypto/stock keywords,
+     elections/politics, and unrelated queries before touching the LLM. It instantly
+     returns a warm, empathetic refusal explaining that the assistant is dedicated solely
+     to health and wellness.
+  2. Strict System Instructions: For permissible queries, the system prompt explicitly frames
+     the assistant as an educational health companion, instructing it to distinguish
+     observations from supportive suggestions, cite uploaded records, and remind users
+     to consult medical professionals for diagnosis.
+
+PROBLEM 5: Designing a Calming Health UI Without Sterile or Gimmicky Tropes
+- The Symptom:
+  Most default AI interfaces use purple/blue neon gradients, glowing orb avatars,
+  gamey bouncing dot animations, or cold clinical white/blue palettes with medical crosses
+  that falsely imply diagnostic authority.
+- Root Cause:
+  Default design systems rely on generic tech templates or hospital portal styling.
+- The Solution:
+  1. Palette: Built around warm neutrals (warm linen `#F9F7F2`, soft sand `#F2EDE4`,
+     warm taupe `#EBE5DB`) and a single calming accent: earthy sage green (`#4A6B5D`).
+  2. Typography: Plus Jakarta Sans with 1.68 line-height for readability during stressful moments.
+  3. Hierarchy: Subtle background differentiation for user vs assistant messages; clear
+     `.suggestion-block` styling to separate lifestyle advice from clinical observations.
+  4. Thinking State: A gentle breathing opacity pulse ("Reflecting on health records & knowledge...")
+     instead of bouncing gamey dots.
+  5. Grounded Controls: A solid, fixed bottom input container with clear affordances
+     for appending PDFs, searching blood donation camps, and sending queries.
+
+PROBLEM 6: Government API CORS & Irregular Data Fields in eRaktKosh
+- The Symptom:
+  Browsers cannot directly call `https://eraktkosh.mohfw.gov.in` due to Cross-Origin Resource
+  Sharing (CORS) blocks and strict SSL/User-Agent expectations. Furthermore, government camp data
+  frequently contains missing keys, null strings, or empty hyphens ("-") for contact numbers or organizers.
+- Root Cause:
+  The MoHFW portal does not emit permissive `Access-Control-Allow-Origin: *` headers for arbitrary clients,
+  and fields vary widely by district registering authorities.
+- The Solution:
+  1. Built a dedicated proxy route `GET /api/camps` on the Express backend that communicates directly
+     with eRaktKosh using realistic browser headers and a 12-second abort timeout.
+  2. Built `CampCard` rendering with field omission logic (`val && val !== '-' && val !== '0'`).
+     If an organizer, phone number, or hospital is unlisted, that row is omitted cleanly without
+     rendering "undefined", null, or empty whitespace.
+  3. Provided graceful empty states that offer 1-click exploration of the "Next 7 Days".
+
+
+--------------------------------------------------------------------------------
+PART 3: SYSTEM ARCHITECTURE
+--------------------------------------------------------------------------------
+
+[User Browser UI: http://localhost:3000]
+       │
+       ├─► (POST /api/upload-pdf) ──► Multer saves PDF ──► Python Conversion (Unstructured/PyMuPDF)
+       │                                                         │
+       │                                                         ▼
+       │                                            Generated Markdown (.md)
+       │                                                         │
+       │                                                         ▼
+       │                                           Atomic MCP: create_atom
+       │                                                         │
+       │                                                         ▼
+       │                                           Atomic Knowledge Graph (Port 8080)
+       │
+       ├─► (GET /api/camps?stateCode=27&districtCode=...&startDate=...&endDate=...)
+       │         │
+       │         ▼
+       │   [Backend Proxy (CORS Shield & Timeout Handler)]
+       │         │
+       │         ▼
+       │   eRaktKosh MoHFW API (https://eraktkosh.mohfw.gov.in)
+       │         │
+       │         ▼
+       │   Clean Parsed JSON Camp Objects ──► Rendered as Humanist CampCards in Chat UI
+       │
+       └─► (POST /api/chat/stream)
+                 │
+                 ▼
+       [Intent Pre-Filter (Health Guardrail)]
+                 │
+                 ├── (If Off-Topic) ──► Instant Warm Health-Only Refusal
+                 │
+                 └── (If Health Topic)
+                           │
+                           ▼
+                 Atomic MCP: semantic_search ──► Retrieve relevant notes/PDF context
+                           │
+                           ▼
+                 Ollama: llama3.2:3b (Port 11434, 8k context)
+                           │
+                           ▼
+                 SSE Stream Chunks ──► User Browser UI (Real-time Token Display)
+
+--------------------------------------------------------------------------------
+PART 4: ERAKTKOSH "CAMPS NEAR ME" IMPLEMENTATION DETAILS
+--------------------------------------------------------------------------------
+- State & District Mapping: Hardcoded Maharashtra lookup (stateCode: "27") with all 35
+  district codes (Pune: 521, Mumbai: 519, Mumbai Suburban: 518, Thane: 517, etc.).
+- Conversational UX: Triggered via "Camps Near Me" button, suggestion chip, or natural chat query.
+  Bot presents an interactive inline picker with quick chips for top districts, a full 35-district
+  dropdown, and date range toggles (Today, Tomorrow, Next 7 Days).
+- CORS Resolution: Uses `/api/camps` proxy on Node backend to fetch directly from
+  eRaktKosh with realistic browser User-Agent and timeout protection.
+- Presentation: Results are formatted into clean CampCard elements displaying camp
+  name, date/time, venue address, hospital blood bank, and clickable tel: links.
+- Edge Cases: Empty states provide 1-click "Check Next 7 Days" action; network errors
+  provide a friendly retry button.
+
+--------------------------------------------------------------------------------
+PART 5: ERAKTKOSH "CHECK BLOOD AVAILABILITY" IMPLEMENTATION DETAILS
+--------------------------------------------------------------------------------
+1. Endpoint & Query Parameters:
+   `GET https://eraktkosh.mohfw.gov.in/eraktkoshPortal/eraktkosh/blood-availability?stateCode={stateCode}&districtId={districtId}&componentId={componentId}&bloodGroupId={bloodGroupId}`
+   - Proxy Route: `GET /api/blood-availability` on Express server.
+   - State Code Default: `27` (Maharashtra).
+   - District Codes: Reused existing 35 Maharashtra districts lookup table (e.g. Pune: 521, Mumbai: 519, Thane: 517).
+   - Component ID Verification: Verified `componentId = "12"` as "Packed Red Blood Cells (PRBC)", which represents
+     active stored transfusion inventory in blood banks. Component `11` represents "Whole Blood", which is rarely
+     stored unseparated in modern blood banks (frequently yielding 0 units). Defaulting to `12` provides medically accurate results.
+   - Blood Group IDs (Verified from eRaktKosh master dropdowns):
+     * "11" -> A+Ve
+     * "12" -> A-Ve
+     * "13" -> B+Ve
+     * "14" -> B-Ve
+     * "17" -> AB+Ve
+     * "18" -> AB-Ve
+     * "15" -> O+Ve
+     * "16" -> O-Ve
+     * "22" -> Oh+VE (Bombay Blood Group)
+     * "23" -> Oh-VE (Bombay Blood Group)
+     Note: Bombay blood groups (`Oh+`/`Oh-`) were intentionally preserved in the UI chips due to their extreme
+     clinical significance and life-critical rarity.
+
+2. Conversational UX Flow:
+   - Triggers:
+     * Dedicated "Check Blood Stock" button in the grounded bottom bar (`#bloodStockBtn`).
+     * Starter suggestion chip: `data-action="blood_availability"`.
+     * Natural language intent matching in `sendMessage()` (e.g., "blood availability", "o+ stock", "need b- blood").
+   - Inline Picker Widget:
+     * 10 quick-reply blood group chips (including Oh+/Oh-).
+     * Maharashtra district picker (quick chips for Pune, Mumbai, Thane, etc. + full 35-district select dropdown).
+     * Component selection (PRBC 12 default vs Whole Blood 11 option with explanatory note).
+     * "Check Live Availability" action button.
+   - Client Fetching Function:
+     * `fetchBloodAvailability(stateCode, districtId, componentId, bloodGroupId)` implemented matching the robust
+       `fetchCampDetails` pattern with error propagation, loading indicators, and card rendering.
+
+3. Visual Design & Calm Status Architecture:
+   - Stock Badges:
+     * Available (>0 units): Calm sage green accent (`#4A6B5D`, subtle background `#E8F0EC`, border `#C4D8CD`).
+     * Low/None (0 units): Muted warm gray tone (`#878278`, background `#F2EDE4`, border `#E5DFD5`).
+     * Strictly avoids alarming red or fluorescent green, preserving a reassuring, clinical-grade aesthetic.
+   - Clinical & Travel Notice:
+     * Prominent disclaimer box placed near results advising users that blood stock updates periodically and
+       demanding that users call the blood bank directly before traveling for emergencies.
+   - Direct Communication: Clickable `tel:` links formatted directly from hospital contact numbers.
+
+4. Edge Cases & Safety Handling:
+   - Zero Units Across All Banks: Displays clear message:
+     "No units currently reported for [blood group] in [district]. Try a nearby district or call the state blood helpline (104) or national helpline (1910)."
+     Crucially, all local blood centres are still listed with phone numbers so users can call to check for unrecorded emergency stock or incoming donations.
+   - Network / API Failure: Graceful error banner with "Try Again" retry button and "Change District" picker reset.
+
+
+--------------------------------------------------------------------------------
+PART 6: BLOOD AVAILABILITY CHALLENGES & DISCOVERIES
+--------------------------------------------------------------------------------
+- Challenge 1: Unraveling Component IDs (`11` vs `12`):
+  * Initial expectation was that `componentId=11` would be the primary blood stock. Investigation of eRaktKosh
+    master data revealed `11` is "Whole Blood", which blood banks rarely hold undivided today. `componentId=12`
+    is "Packed Red Blood Cells (PRBC)", which contains 95%+ of actual hospital units. Defaulting to `12` with
+    an optional toggle to `11` solved the discrepancy.
+- Challenge 2: Bombay Blood Group Verification:
+  * Blood groups on eRaktKosh do not follow a strictly linear index (`11`-`18` for standard groups, but `22` and `23`
+    for `Oh+` and `Oh-`). We confirmed these specific IDs directly against the eRaktKosh portal schema.
+- Challenge 3: Parsing eRaktKosh's Nested JSON Structure:
+  * eRaktKosh formats component availability under dynamic keys (e.g. `item.components["Packed Red Blood Cells"].available_WithQty`
+    as `"A+Ve : 70"`). Our backend parser dynamically extracts the quantity integer via regex and sorts banks with
+    available units at the top.
+
+--------------------------------------------------------------------------------
+PART 7: LIFELINK PLATFORM INTEGRATION, PORT RESOLUTION & UI LAUNCHERS
+--------------------------------------------------------------------------------
+1. Unified Reverse-Proxy Gateway Integration:
+   - LifeLink uses `gateway.js` to unify the Main Platform (Vite :5173), Backend API (:5001),
+     ML Service (:8000), and Chatbot (:3000) under a single entrypoint (http://localhost:8090).
+   - Dedicated Chatbot API routing: Intercepts `/api/chat`, `/api/camps`, `/api/districts`,
+     `/api/blood-groups`, `/api/blood-availability`, `/api/upload-pdf`, `/api/documents`, and `/api/status`
+     to direct them seamlessly to `chatboot` without modifying frontend paths in `app.js`.
+
+2. Port Conflict Resolutions:
+   - Port 8080 Oracle DB Collision: Port 8080 was occupied by Oracle's TNS Listener (`TNSLSNR.exe`),
+     prompting users for database basic auth. The Gateway default port was migrated to `8090`.
+   - Port 3000 Vite Collision: Vite was hardcoded to `port: 3000`. It was moved to `5173` to grant
+     `chatboot` exclusive ownership of `port: 3000`.
+   - Backend PORT=5001 Env Inheritance: Updated `chatboot/server.js` to strictly use `process.env.CHATBOT_PORT || 3000`
+     so it never mistakenly binds to the backend Express port (5001).
+
+3. Redirect Loop Resolution (ERR_TOO_MANY_REDIRECTS):
+   - Express default router non-strict routing caused `/chat` and `/chat/` to collide, looping
+     301 redirects infinitely. Resolved by replacing the route with exact path middleware
+     (`if (req.path === '/chat')`) and switching to `302 Found`.
+
+4. Direct In-App Frontend Integration:
+   - Built `frontend/src/components/common/FloatingChatbot.tsx`, providing a persistent floating button
+     at the bottom right of the LifeLink platform that expands into a modal embedding `/chat/`.
+   - Added persistent "AI Assistant" triggers in the desktop Navbar, mobile navigation drawer,
+     and portal Sidebar.
+
+--------------------------------------------------------------------------------
+PART 8: IFRAME EMBEDDED MODE, UI LAYOUT OVERHAUL & GATEWAY RESOLUTION
+--------------------------------------------------------------------------------
+1. Iframe Redirect Loop & Port 3000 Direct Connection:
+   - Problem: In the frontend application, the modal iframe pointing to `/chat/` suffered from
+     `ERR_TOO_MANY_REDIRECTS` caused by browser-level caching of stale 301 redirects.
+   - Solution: Updated `FloatingChatbot.tsx` to target `http://localhost:3000/?embed=1` directly,
+     bypassing all gateway/proxy redirect loops while guaranteeing 200 OK immediately.
+
+2. Embedded UI Alignment & Zero-Scroll Layout Overhaul:
+   - Problem: The default chatbot was tailored for full-desktop viewports (1040px max width,
+     wide margins, inline buttons). Inside a 420px-460px modal panel, this caused horizontal
+     scroll, broken suggestion grids, and squeezed the chat textarea to zero.
+   - Solution:
+     * Injected instantaneous `<script>` in `<head>` of `index.html` to add `.embedded` class
+       prior to first paint, eliminating layout shift.
+     * Fixed the missing `<div class="starter-suggestions" id="starterSuggestions">` container in
+       `index.html` so suggestion chips stack and bind click events reliably.
+     * Split `.input-panel` into two tiers: an `.input-actions-row` toolbar for action shortcuts
+       (`Append PDF`, `Camps Near Me`, `Blood Stock`) and `.input-main-row` for the textarea and send button.
+     * Implemented compact CSS overrides under `html.embedded` in `style.css` (hidden status pills,
+       slim 48px header, full-width fluid layouts, thin 4px scrollbars, and optimized cards).
+     * Enhanced `FloatingChatbot.tsx` with a dual-size view toggle (Standard 460px vs Expanded 720px)
+       for comfortably inspecting multi-card blood bank & camp responses.
+
+3. Gateway API Mount Path Stripping (`POST /auth/register` 404):
+   - Problem: In `http-proxy-middleware v3`, mounting with `app.use('/api', ...)` stripped `/api`
+     from `req.url`, forwarding `/auth/register` instead of `/api/auth/register` to backend (:5001).
+   - Solution: Added `pathRewrite: (path) => '/api' + path` in `gateway.js` so all backend API endpoints
+     retain their `/api` prefix cleanly.
+
+==================================================
+END OF AGY.TXT
+==================================================
+

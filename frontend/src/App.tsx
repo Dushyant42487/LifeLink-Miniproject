@@ -83,6 +83,7 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; allowedRoles?: UserR
 };
 
 import { EmergencyAlertBanner } from './components/common/EmergencyAlertBanner';
+import { FloatingChatbot } from './components/common/FloatingChatbot';
 
 // Main Layout Wrapper
 const MainLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -93,7 +94,7 @@ const MainLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const showSidebar = user && !isPublicPage;
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className="min-h-screen bg-slate-50 flex flex-col relative">
       <Navbar />
       <EmergencyAlertBanner />
       <div className="flex-1 flex">
@@ -102,6 +103,7 @@ const MainLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           {children}
         </main>
       </div>
+      <FloatingChatbot />
     </div>
   );
 };

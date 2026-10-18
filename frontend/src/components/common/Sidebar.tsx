@@ -22,7 +22,8 @@ import {
   Lock,
   Navigation,
   User,
-  Thermometer
+  Thermometer,
+  Sparkles
 } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
@@ -215,7 +216,23 @@ export const Sidebar: React.FC = () => {
       </div>
 
       {/* Footer Section with Logout & Status */}
-      <div className="pt-4 border-t border-slate-100 space-y-3">
+      <div className="pt-4 border-t border-slate-100 space-y-2.5">
+        {/* AI Assistant Quick Trigger */}
+        <button
+          onClick={() => {
+            window.dispatchEvent(new CustomEvent('open-lifelink-chatbot'));
+          }}
+          className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold text-lifelink-700 bg-lifelink-50 hover:bg-lifelink-100 border border-lifelink-200 transition-colors cursor-pointer"
+        >
+          <div className="flex items-center space-x-2">
+            <Sparkles className="w-3.5 h-3.5 text-lifelink-600 animate-pulse" />
+            <span>AI Health Assistant</span>
+          </div>
+          <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-lifelink-600 text-white">
+            Live
+          </span>
+        </button>
+
         {/* Universal Logout button */}
         <button
           onClick={handleLogout}

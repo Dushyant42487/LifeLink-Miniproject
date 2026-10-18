@@ -252,7 +252,24 @@ export const Navbar: React.FC = () => {
           )}
 
           {/* Action CTAs & User Menu */}
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center space-x-2 sm:space-x-3">
+            {/* AI Assistant Quick Launcher */}
+            <button
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent('open-lifelink-chatbot'));
+              }}
+              className="flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold text-lifelink-700 bg-lifelink-50 hover:bg-lifelink-100/90 border border-lifelink-200/80 transition-all hover:scale-[1.02] cursor-pointer shadow-2xs"
+              title="Open LifeLink AI Health & Blood Availability Assistant"
+              aria-label="Open AI Assistant"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-lifelink-600 animate-pulse" />
+              <span className="hidden sm:inline">AI Assistant</span>
+              <span className="inline sm:hidden font-bold">AI</span>
+              <span className="hidden xs:inline-flex items-center px-1.5 py-0.2 rounded-full text-[9px] font-extrabold bg-lifelink-600 text-white">
+                Live
+              </span>
+            </button>
+
             {/* Authenticated User state */}
             {user ? (
               <div className="flex items-center space-x-2">
@@ -442,6 +459,22 @@ export const Navbar: React.FC = () => {
             aria-label="Mobile Navigation"
             className="md:hidden py-3 px-2 border-t border-slate-100 bg-white space-y-1 text-sm font-medium"
           >
+            {/* Mobile AI Assistant Launcher */}
+            <button
+              onClick={() => {
+                setMobileMenuOpen(false);
+                window.dispatchEvent(new CustomEvent('open-lifelink-chatbot'));
+              }}
+              className="w-full text-left px-3 py-2.5 mb-2 rounded-xl flex items-center justify-between text-xs font-bold text-lifelink-700 bg-lifelink-50 border border-lifelink-200 transition-colors cursor-pointer"
+            >
+              <div className="flex items-center space-x-2">
+                <Sparkles className="w-4 h-4 text-lifelink-600" />
+                <span>AI Health Assistant & Live Stock</span>
+              </div>
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-lifelink-600 text-white">
+                Open
+              </span>
+            </button>
             {isPortalPage && user?.role === 'donor' ? (
               <>
                 <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Donor Navigation</div>
