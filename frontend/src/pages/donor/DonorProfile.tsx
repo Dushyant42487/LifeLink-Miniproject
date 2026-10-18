@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { donorApi } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { DigitalDonorPassModal } from '../../components/common/DigitalDonorPassModal';
-import { Save, CheckCircle2, AlertCircle, RefreshCw, User, Phone, MapPin, FileCheck, Bell, Upload, QrCode, ExternalLink, RefreshCcw, Navigation, Compass, MapPinOff, Globe } from 'lucide-react';
+import { Save, CheckCircle2, AlertCircle, RefreshCw, User, Phone, MapPin, FileCheck, Bell, Upload, QrCode, ExternalLink, RefreshCcw, Navigation, Compass, MapPinOff, Globe, Building2, HelpCircle, ShieldAlert, Ban, ShieldCheck, Info, Check, ArrowRight, X, Clock } from 'lucide-react';
 import { evaluateProfileCompleteness } from '../../utils/profileCompleteness';
 import { LocationSearchInput, LocationSuggestion } from '../../components/common/LocationSearchInput';
 import { OSMMap } from '../../components/common/OSMMap';
@@ -26,6 +26,7 @@ export const DonorProfile: React.FC = () => {
   const [latitudeStr, setLatitudeStr] = useState('');
   const [longitudeStr, setLongitudeStr] = useState('');
   const [geoLocating, setGeoLocating] = useState(false);
+  const [geocoding, setGeocoding] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
 
   const [weightKg, setWeightKg] = useState('70');
@@ -38,6 +39,29 @@ export const DonorProfile: React.FC = () => {
   const [emergAlertsPref, setEmergAlertsPref] = useState(true);
   const [campRemindersPref, setCampRemindersPref] = useState(true);
   const [eligibilityAlertsPref, setEligibilityAlertsPref] = useState(true);
+
+  // Form state machine: 'loading' | 'up_to_date' | 'unsaved_changes' | 'saving' | 'saved_successfully' | 'save_failed'
+  const [formState, setFormState] = useState<'loading' | 'up_to_date' | 'unsaved_changes' | 'saving' | 'saved_successfully' | 'save_failed'>('loading');
+  const [geocodingStatus, setGeocodingStatus] = useState<string | null>(null);
+
+  // Eligible Blood Bank directory & routing selection
+  interface EligibleBloodBank {
+    id: string;
+    name: string;
+    city?: string;
+    state?: string;
+    address?: string;
+    distanceKm?: number;
+    phone?: string;
+    email?: string;
+    verificationStatus?: string;
+    active?: boolean;
+  }
+  const [bloodBanks, setBloodBanks] = useState<EligibleBloodBank[]>([]);
+  const [loadingBloodBanks, setLoadingBloodBanks] = useState(false);
+  const [showAllBloodBanks, setShowAllBloodBanks] = useState(false);
+  const [preferredBloodBankId, setPreferredBloodBankId] = useState<string>('');
+  const [cancellingVerification, setCancellingVerification] = useState(false);
 
   // Baseline state for dirty-tracking
   const [initialBaseline, setInitialBaseline] = useState<string>('');
@@ -54,84 +78,121 @@ export const DonorProfile: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  const loadEligibleBloodBanks = async (lat?: number | null, lng?: number | null, rad?: string, all?: boolean) => {
+    setLoadingBloodBanks(true);
+    try {
+      const params: any = {};
+      if (isValidCoordinate(lat, lng)) {
+        params.lat = Number(lat);
+        params.lng = Number(lng);
+      }
+      if (!all && rad && rad !== 'all') {
+        params.radius = rad;
+      }
+      const res = await donorApi.getEligibleBloodBanks(params);
+      if (res.success && res.bloodBanks) {
+        setBloodBanks(res.bloodBanks);
+      }
+    } catch (err) {
+      console.error('Failed to load eligible blood banks:', err);
+    } finally {
+      setLoadingBloodBanks(false);
+    }
+  };
+
   useEffect(() => {
     const fetchProfile = async () => {
-      const res = await donorApi.getProfile();
-      if (res.success && res.donor) {
-        const d = res.donor;
-        setProfile(d);
-        const nameVal = d.name || user?.name || '';
-        const phoneVal = d.phone || '';
-        const addressVal = d.address || '';
-        const cityVal = d.city || '';
-        const stateVal = d.state || '';
-        const postalCodeVal = d.postalCode || '';
-        const latVal = (d.latitude !== undefined && d.latitude !== null && Number.isFinite(Number(d.latitude))) ? Number(d.latitude) : null;
-        const lngVal = (d.longitude !== undefined && d.longitude !== null && Number.isFinite(Number(d.longitude))) ? Number(d.longitude) : null;
-        const weightVal = String(d.weightKg || 70);
-        const radiusVal = String(d.travelRadiusKm || 25);
-        const pauseVal = Boolean(d.pauseInvitations);
-        const emergNameVal = d.emergencyContact?.name || '';
-        const emergPhoneVal = d.emergencyContact?.phone || '';
-        const emergRelVal = d.emergencyContact?.relation || 'Family';
+      setFormState('loading');
+      try {
+        const res = await donorApi.getProfile();
+        if (res.success && res.donor) {
+          const d = res.donor;
+          setProfile(d);
+          const nameVal = d.name || user?.name || '';
+          const phoneVal = d.phone || '';
+          const addressVal = d.address || '';
+          const cityVal = d.city || '';
+          const stateVal = d.state || '';
+          const postalCodeVal = d.postalCode || '';
+          const latVal = (d.latitude !== undefined && d.latitude !== null && Number.isFinite(Number(d.latitude))) ? Number(d.latitude) : null;
+          const lngVal = (d.longitude !== undefined && d.longitude !== null && Number.isFinite(Number(d.longitude))) ? Number(d.longitude) : null;
+          const weightVal = String(d.weightKg || 70);
+          const radiusVal = String(d.travelRadiusKm || 25);
+          const pauseVal = Boolean(d.pauseInvitations);
+          const emergNameVal = d.emergencyContact?.name || '';
+          const emergPhoneVal = d.emergencyContact?.phone || '';
+          const emergRelVal = d.emergencyContact?.relation || 'Family';
 
-        const emPref = d.notificationPreferences?.emergencyAlerts !== false;
-        const campPref = d.notificationPreferences?.campReminders !== false;
-        const elPref = d.notificationPreferences?.eligibilityAlerts !== false;
+          const emPref = d.notificationPreferences?.emergencyAlerts !== false;
+          const campPref = d.notificationPreferences?.campReminders !== false;
+          const elPref = d.notificationPreferences?.eligibilityAlerts !== false;
 
-        setName(nameVal);
-        setPhone(phoneVal);
-        setAddress(addressVal);
-        setCity(cityVal);
-        setState(stateVal);
-        setPostalCode(postalCodeVal);
-        setLatitude(latVal);
-        setLongitude(lngVal);
-        setLatitudeStr(latVal !== null ? String(latVal) : '');
-        setLongitudeStr(lngVal !== null ? String(lngVal) : '');
+          const pBankId = d.preferredBloodBankId || d.assignedBloodBankId || '';
+          setPreferredBloodBankId(pBankId);
 
-        setWeightKg(weightVal);
-        setTravelRadiusKm(radiusVal);
-        setPauseInvitations(pauseVal);
-        setEmergName(emergNameVal);
-        setEmergPhone(emergPhoneVal);
-        setEmergRelation(emergRelVal);
-        setEmergAlertsPref(emPref);
-        setCampRemindersPref(campPref);
-        setEligibilityAlertsPref(elPref);
+          setName(nameVal);
+          setPhone(phoneVal);
+          setAddress(addressVal);
+          setCity(cityVal);
+          setState(stateVal);
+          setPostalCode(postalCodeVal);
+          setLatitude(latVal);
+          setLongitude(lngVal);
+          setLatitudeStr(latVal !== null ? String(latVal) : '');
+          setLongitudeStr(lngVal !== null ? String(lngVal) : '');
 
-        // Record initial baseline
-        const baseline = JSON.stringify({
-          name: nameVal,
-          phone: phoneVal,
-          address: addressVal,
-          city: cityVal,
-          state: stateVal,
-          postalCode: postalCodeVal,
-          latitude: latVal,
-          longitude: lngVal,
-          weightKg: weightVal,
-          travelRadiusKm: radiusVal,
-          pauseInvitations: pauseVal,
-          emergName: emergNameVal,
-          emergPhone: emergPhoneVal,
-          emergRelation: emergRelVal,
-          emergAlertsPref: emPref,
-          campRemindersPref: campPref,
-          eligibilityAlertsPref: elPref
-        });
-        setInitialBaseline(baseline);
+          setWeightKg(weightVal);
+          setTravelRadiusKm(radiusVal);
+          setPauseInvitations(pauseVal);
+          setEmergName(emergNameVal);
+          setEmergPhone(emergPhoneVal);
+          setEmergRelation(emergRelVal);
+          setEmergAlertsPref(emPref);
+          setCampRemindersPref(campPref);
+          setEligibilityAlertsPref(elPref);
 
-        // Check if proof document already uploaded
-        if (d.proofDocument) {
-          setUploadedFile({
-            name: d.proofDocument.fileName,
-            size: d.proofDocument.fileSize,
-            url: d.proofDocument.fileUrl,
-            docId: d.proofDocument.docId
+          // Record initial baseline
+          const baseline = JSON.stringify({
+            name: nameVal,
+            phone: phoneVal,
+            address: addressVal,
+            city: cityVal,
+            state: stateVal,
+            postalCode: postalCodeVal,
+            latitude: latVal,
+            longitude: lngVal,
+            weightKg: weightVal,
+            travelRadiusKm: radiusVal,
+            pauseInvitations: pauseVal,
+            emergName: emergNameVal,
+            emergPhone: emergPhoneVal,
+            emergRelation: emergRelVal,
+            emergAlertsPref: emPref,
+            campRemindersPref: campPref,
+            eligibilityAlertsPref: elPref,
+            preferredBloodBankId: pBankId
           });
-          setUploadState('uploaded');
+          setInitialBaseline(baseline);
+          setFormState('up_to_date');
+
+          // Check if proof document already uploaded
+          if (d.proofDocument) {
+            setUploadedFile({
+              name: d.proofDocument.fileName,
+              size: d.proofDocument.fileSize,
+              url: d.proofDocument.fileUrl,
+              docId: d.proofDocument.docId
+            });
+            setUploadState('uploaded');
+          }
+
+          // Fetch eligible blood banks prioritized by donor coordinates & radius
+          await loadEligibleBloodBanks(latVal, lngVal, radiusVal, false);
+        } else {
+          setFormState('save_failed');
         }
+      } catch {
+        setFormState('save_failed');
       }
     };
     fetchProfile();
@@ -155,10 +216,26 @@ export const DonorProfile: React.FC = () => {
     emergRelation,
     emergAlertsPref,
     campRemindersPref,
-    eligibilityAlertsPref
+    eligibilityAlertsPref,
+    preferredBloodBankId
   });
 
   const isDirty = Boolean(initialBaseline && initialBaseline !== currentFormState);
+
+  const isAddressDirty = useMemo(() => {
+    if (!initialBaseline) return false;
+    try {
+      const base = JSON.parse(initialBaseline);
+      return (
+        base.address !== address ||
+        base.city !== city ||
+        base.state !== state ||
+        base.postalCode !== postalCode
+      );
+    } catch {
+      return false;
+    }
+  }, [initialBaseline, address, city, state, postalCode]);
 
   // Unsaved changes window listener
   useEffect(() => {
@@ -204,6 +281,38 @@ export const DonorProfile: React.FC = () => {
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
+  };
+
+  const handleGeocodeAddress = async () => {
+    const parts = [address.trim(), city.trim(), state.trim(), postalCode.trim()].filter(Boolean);
+    if (parts.length === 0) {
+      setGeoError('Please enter at least an address or city to geocode.');
+      return;
+    }
+    setGeocoding(true);
+    setGeoError(null);
+    try {
+      const q = parts.join(', ');
+      const geoRes = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`
+      );
+      const data = await geoRes.json();
+      if (data && data.length > 0 && isValidCoordinate(data[0].lat, data[0].lon)) {
+        const lat = Number(Number(data[0].lat).toFixed(6));
+        const lng = Number(Number(data[0].lon).toFixed(6));
+        setLatitude(lat);
+        setLongitude(lng);
+        setLatitudeStr(String(lat));
+        setLongitudeStr(String(lng));
+        setMsg({ type: 'success', text: `Geocoded "${q}" to (${lat}, ${lng}). Remember to save changes.` });
+      } else {
+        setGeoError(`Unable to geocode "${q}". Please check the address or search in the location box.`);
+      }
+    } catch {
+      setGeoError('Geocoding service unavailable. Please enter coordinates manually.');
+    } finally {
+      setGeocoding(false);
+    }
   };
 
   const handleSelectLocationSuggestion = (item: LocationSuggestion) => {
@@ -283,7 +392,7 @@ export const DonorProfile: React.FC = () => {
       return;
     }
 
-    // Coordinates validation
+    // Coordinates validation & fallback geocoding
     let finalLat: number | null = null;
     let finalLng: number | null = null;
     if (latitudeStr.trim() !== '' || longitudeStr.trim() !== '') {
@@ -294,69 +403,109 @@ export const DonorProfile: React.FC = () => {
       }
       finalLat = parsed.lat!;
       finalLng = parsed.lng!;
+    } else if (address.trim() || city.trim()) {
+      // Auto-geocode fallback if coordinates are missing but address is provided
+      try {
+        const query = [address.trim(), city.trim(), state.trim(), postalCode.trim()].filter(Boolean).join(', ');
+        const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`);
+        const geoData = await geoRes.json();
+        if (geoData && geoData.length > 0 && isValidCoordinate(geoData[0].lat, geoData[0].lon)) {
+          finalLat = Number(Number(geoData[0].lat).toFixed(6));
+          finalLng = Number(Number(geoData[0].lon).toFixed(6));
+          setLatitude(finalLat);
+          setLongitude(finalLng);
+          setLatitudeStr(String(finalLat));
+          setLongitudeStr(String(finalLng));
+        }
+      } catch (e) {
+        // Continue saving text even if network geocoding failed
+      }
     }
 
     setSaving(true);
+    setFormState('saving');
 
-    const res = await donorApi.updateProfile({
-      name: name.trim(),
-      phone: phone.trim(),
-      address: address.trim(),
-      city: city.trim(),
-      state: state.trim(),
-      postalCode: postalCode.trim(),
-      latitude: finalLat,
-      longitude: finalLng,
-      weightKg: Number(weightKg),
-      travelRadiusKm: Number(travelRadiusKm),
-      pauseInvitations,
-      emergencyContact: {
-        name: emergName.trim(),
-        phone: emergPhone.trim(),
-        relation: emergRelation
-      },
-      notificationPreferences: {
-        emergencyAlerts: emergAlertsPref,
-        campReminders: campRemindersPref,
-        eligibilityAlerts: eligibilityAlertsPref
-      }
-    });
-
-    setSaving(false);
-
-    if (res.success) {
-      const d = res.donor;
-      setProfile(d);
-      const latVal = (d?.latitude !== undefined && d?.latitude !== null) ? Number(d.latitude) : null;
-      const lngVal = (d?.longitude !== undefined && d?.longitude !== null) ? Number(d.longitude) : null;
-      setLatitude(latVal);
-      setLongitude(lngVal);
-      setLatitudeStr(latVal !== null ? String(latVal) : '');
-      setLongitudeStr(lngVal !== null ? String(lngVal) : '');
-
-      const savedState = JSON.stringify({
-        name: d.name || name.trim(),
-        phone: d.phone || phone.trim(),
-        address: d.address || address.trim(),
-        city: d.city || city.trim(),
-        state: d.state || state.trim(),
-        postalCode: d.postalCode || postalCode.trim(),
-        latitude: latVal,
-        longitude: lngVal,
-        weightKg: String(d.weightKg || weightKg),
-        travelRadiusKm: String(d.travelRadiusKm || travelRadiusKm),
-        pauseInvitations: Boolean(d.pauseInvitations),
-        emergName: d.emergencyContact?.name || emergName.trim(),
-        emergPhone: d.emergencyContact?.phone || emergPhone.trim(),
-        emergRelation: d.emergencyContact?.relation || emergRelation,
-        emergAlertsPref,
-        campRemindersPref,
-        eligibilityAlertsPref
+    try {
+      const res = await donorApi.updateProfile({
+        name: name.trim(),
+        phone: phone.trim(),
+        address: address.trim(),
+        city: city.trim(),
+        state: state.trim(),
+        postalCode: postalCode.trim(),
+        latitude: finalLat,
+        longitude: finalLng,
+        weightKg: Number(weightKg),
+        travelRadiusKm: Number(travelRadiusKm),
+        pauseInvitations,
+        preferredBloodBankId: preferredBloodBankId || undefined,
+        emergencyContact: {
+          name: emergName.trim(),
+          phone: emergPhone.trim(),
+          relation: emergRelation
+        },
+        notificationPreferences: {
+          emergencyAlerts: emergAlertsPref,
+          campReminders: campRemindersPref,
+          eligibilityAlerts: eligibilityAlertsPref
+        }
       });
-      setInitialBaseline(savedState);
-      setMsg({ type: 'success', text: 'Donor profile and location saved successfully!' });
-    } else {
-      setMsg({ type: 'error', text: res.error || 'Failed to update profile.' });
+
+      setSaving(false);
+
+      if (res.success) {
+        const d = res.donor;
+        setProfile(d);
+        setGeocodingStatus(res.geocodingStatus || null);
+        const latVal = (d?.latitude !== undefined && d?.latitude !== null) ? Number(d.latitude) : null;
+        const lngVal = (d?.longitude !== undefined && d?.longitude !== null) ? Number(d.longitude) : null;
+        setLatitude(latVal);
+        setLongitude(lngVal);
+        setLatitudeStr(latVal !== null ? String(latVal) : '');
+        setLongitudeStr(lngVal !== null ? String(lngVal) : '');
+
+        const pBankId = d.preferredBloodBankId || d.assignedBloodBankId || '';
+        setPreferredBloodBankId(pBankId);
+
+        const savedState = JSON.stringify({
+          name: d.name || name.trim(),
+          phone: d.phone || phone.trim(),
+          address: d.address || address.trim(),
+          city: d.city || city.trim(),
+          state: d.state || state.trim(),
+          postalCode: d.postalCode || postalCode.trim(),
+          latitude: latVal,
+          longitude: lngVal,
+          weightKg: String(d.weightKg || weightKg),
+          travelRadiusKm: String(d.travelRadiusKm || travelRadiusKm),
+          pauseInvitations: Boolean(d.pauseInvitations),
+          emergName: d.emergencyContact?.name || emergName.trim(),
+          emergPhone: d.emergencyContact?.phone || emergPhone.trim(),
+          emergRelation: d.emergencyContact?.relation || emergRelation,
+          emergAlertsPref,
+          campRemindersPref,
+          eligibilityAlertsPref,
+          preferredBloodBankId: pBankId
+        });
+        setInitialBaseline(savedState);
+        setFormState('saved_successfully');
+        setMsg({ type: 'success', text: 'Donor profile and location saved successfully!' });
+
+        // Refresh eligible blood banks with latest coordinates
+        loadEligibleBloodBanks(latVal, lngVal, String(d.travelRadiusKm || travelRadiusKm), showAllBloodBanks);
+
+        // Reset to up_to_date after 4 seconds
+        setTimeout(() => {
+          setFormState((curr) => (curr === 'saved_successfully' ? 'up_to_date' : curr));
+        }, 4000);
+      } else {
+        setFormState('save_failed');
+        setMsg({ type: 'error', text: res.error || 'Failed to update profile.' });
+      }
+    } catch {
+      setSaving(false);
+      setFormState('save_failed');
+      setMsg({ type: 'error', text: 'Connection failed while updating profile. Please retry.' });
     }
   };
 
@@ -432,16 +581,52 @@ export const DonorProfile: React.FC = () => {
     const res = await donorApi.verifyBloodGroup({
       documentType: verifyDocType,
       documentNumber: verifyDocNumber,
-      fileUrl: uploadedFile.url
+      fileUrl: uploadedFile.url,
+      preferredBloodBankId: preferredBloodBankId || undefined
     });
 
     setVerifying(false);
 
     if (res.success) {
       setVerifyMsg(res.message);
-      setProfile((prev: any) => ({ ...prev, bloodGroupVerificationStatus: 'Pending Verification' }));
+      setProfile((prev: any) => ({
+        ...prev,
+        bloodGroupVerificationStatus: 'Pending Verification',
+        verificationStatus: 'Pending Verification',
+        assignedBloodBankId: res.assignedBloodBankId || prev?.assignedBloodBankId,
+        assignedBloodBankName: res.assignedBloodBankName || prev?.assignedBloodBankName
+      }));
     } else {
       setVerifyMsg(res.error || 'Verification submission failed.');
+    }
+  };
+
+  const handleCancelVerification = async () => {
+    if (!window.confirm('Are you sure you want to cancel your active verification request? You can select another blood bank and submit updated proof anytime.')) {
+      return;
+    }
+    setCancellingVerification(true);
+    setVerifyMsg(null);
+    try {
+      const res = await donorApi.cancelVerification();
+      if (res.success) {
+        setProfile((prev: any) => ({
+          ...prev,
+          verificationStatus: 'Cancelled',
+          bloodGroupVerificationStatus: 'Cancelled',
+          assignedBloodBankId: null,
+          assignedBloodBankName: null,
+          preferredBloodBankId: null
+        }));
+        setPreferredBloodBankId('');
+        setVerifyMsg('Verification request has been cancelled. You may choose a new blood bank and submit proof.');
+      } else {
+        setVerifyMsg(res.error || 'Failed to cancel verification request.');
+      }
+    } catch {
+      setVerifyMsg('Network error while cancelling verification.');
+    } finally {
+      setCancellingVerification(false);
     }
   };
 
@@ -654,6 +839,27 @@ export const DonorProfile: React.FC = () => {
             </div>
           )}
 
+          {/* Address Modified / Stale Coordinates Notice */}
+          {isAddressDirty && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 flex items-start space-x-2.5 shadow-2xs">
+              <Compass className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold">Address modified</p>
+                <p className="text-amber-800 text-[11px] mt-0.5">
+                  Your address fields have changed. Coordinates will be automatically recalculated upon saving, or click <strong>"Geocode Address"</strong> below to preview.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Geocoding Status Alert */}
+          {geocodingStatus === 'failed' && (
+            <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-800 flex items-center space-x-2">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>Street address could not be resolved to GPS coordinates. Please refine your street address or choose from search suggestions.</span>
+            </div>
+          )}
+
           {/* Geolocation Feedback & Actions */}
           {geoError && (
             <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-700 flex items-center justify-between">
@@ -678,6 +884,16 @@ export const DonorProfile: React.FC = () => {
                 Search Address / Locality (Auto-fills location & coordinates)
               </label>
               <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={handleGeocodeAddress}
+                  disabled={geocoding}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center space-x-1.5 cursor-pointer shadow-2xs transition-colors disabled:opacity-50"
+                  title="Geocode entered address using OpenStreetMap"
+                >
+                  <MapPin className={`w-3.5 h-3.5 text-rose-600 ${geocoding ? 'animate-spin' : ''}`} />
+                  <span>{geocoding ? 'Geocoding...' : 'Geocode Address'}</span>
+                </button>
                 <button
                   type="button"
                   onClick={handleUseCurrentLocation}
@@ -833,45 +1049,109 @@ export const DonorProfile: React.FC = () => {
             <h3 className="font-bold text-sm text-slate-900">Blood Group Verification Evidence</h3>
           </div>
 
-          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs text-slate-700 space-y-2">
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs text-slate-700 space-y-3">
             <div className="flex items-center justify-between">
               <p>
                 Current Status: <strong className="text-slate-900">{verificationStatus}</strong>
               </p>
-              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
-                verificationStatus === 'Verified'
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                  : verificationStatus === 'Pending Verification'
-                  ? 'bg-amber-50 text-amber-700 border-amber-200'
-                  : verificationStatus === 'Rejected'
-                  ? 'bg-rose-50 text-rose-700 border-rose-200'
-                  : 'bg-slate-100 text-slate-600 border-slate-200'
-              }`}>
-                {verificationStatus}
-              </span>
+              <div className="flex items-center space-x-2">
+                <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
+                  verificationStatus === 'Verified'
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : verificationStatus === 'Pending Verification'
+                    ? 'bg-amber-50 text-amber-700 border-amber-200'
+                    : verificationStatus === 'Needs More Info'
+                    ? 'bg-amber-100 text-amber-900 border-amber-300 font-extrabold'
+                    : verificationStatus === 'Rejected'
+                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                    : 'bg-slate-100 text-slate-600 border-slate-200'
+                }`}>
+                  {verificationStatus}
+                </span>
+
+                {(verificationStatus === 'Pending Verification' || verificationStatus === 'Needs More Info') && (
+                  <button
+                    type="button"
+                    onClick={handleCancelVerification}
+                    disabled={cancellingVerification}
+                    className="px-2 py-0.5 text-[10px] font-bold text-rose-700 hover:bg-rose-100 border border-rose-300 rounded cursor-pointer transition-colors disabled:opacity-50"
+                    title="Cancel active verification request"
+                  >
+                    {cancellingVerification ? 'Cancelling...' : 'Cancel Request'}
+                  </button>
+                )}
+              </div>
             </div>
-            {profile?.rejectionReason && (
-              <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-lg text-xs font-medium">
-                <strong>Rejection Reason:</strong> {profile.rejectionReason}. Please upload valid supporting documentation.
+
+            {verificationStatus === 'Needs More Info' && (
+              <div className="p-3 bg-amber-50 border border-amber-300 text-amber-900 rounded-xl text-xs space-y-1.5 shadow-2xs">
+                <div className="flex items-center space-x-1.5 font-bold text-amber-950">
+                  <AlertCircle className="w-4 h-4 text-amber-700 shrink-0" />
+                  <span>Action Required: Reviewer Requested Additional Documentation</span>
+                </div>
+                <p className="text-amber-900 font-medium">
+                  {profile?.verificationNotes || 'The reviewing blood bank requested clearer documentation. Please review the notes and upload revised proof below.'}
+                </p>
+                {profile?.assignedBloodBankName && (
+                  <p className="text-[11px] text-amber-800">
+                    Reviewing Facility: <strong>{profile.assignedBloodBankName}</strong>
+                  </p>
+                )}
               </div>
             )}
-            {profile?.verifiedAt && (
-              <p className="text-[11px] text-emerald-700 font-medium">
-                ✓ Clinically verified on {new Date(profile.verifiedAt).toLocaleDateString()} {profile.verifiedByName ? `by ${profile.verifiedByName}` : ''}
-              </p>
+
+            {verificationStatus === 'Pending Verification' && profile?.assignedBloodBankName && (
+              <div className="p-3 bg-amber-50/70 border border-amber-200 text-amber-900 rounded-xl text-xs flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>
+                    Your verification proof is under clinical review at <strong>{profile.assignedBloodBankName}</strong>.
+                  </span>
+                </div>
+              </div>
             )}
-            <p className="text-[11px] text-slate-500">
-              Submit an official lab report, donor card, or medical certificate to verify your blood group with LifeLink partner blood centers. Note that 100% profile completeness does not substitute for clinical document verification.
-            </p>
+
+            {verificationStatus === 'Verified' && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl text-xs flex items-center space-x-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>
+                  Confirmed Blood Group: <strong>{profile.bloodGroup}</strong> • Clinically verified {profile.verifiedAt ? `on ${new Date(profile.verifiedAt).toLocaleDateString()}` : ''} {profile.verifiedByName ? `by ${profile.verifiedByName}` : ''}.
+                </span>
+              </div>
+            )}
+
+            {profile?.rejectionReason && (
+              <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-lg text-xs font-medium">
+                <strong>Rejection Reason:</strong> {profile.rejectionReason}. Please upload valid supporting documentation to re-apply.
+              </div>
+            )}
+
+            {verificationStatus === 'Cancelled' && (
+              <div className="p-2.5 bg-slate-100 border border-slate-200 text-slate-700 rounded-lg text-xs">
+                Your previous verification request was cancelled. You may choose an authorized blood bank below and submit updated proof documents.
+              </div>
+            )}
+
+            {/* Medical Eligibility vs Identity Verification Separation Notice */}
+            <div className="bg-blue-50/70 border border-blue-200/80 rounded-xl p-3 text-xs text-blue-900 flex items-start space-x-2.5">
+              <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+              <p className="text-[11px] leading-relaxed">
+                <strong>Clinical Verification Policy:</strong> Blood group and donor identity verification confirms clinical documentation issued by certified laboratories.
+                Physical medical eligibility (hemoglobin, weight, blood pressure, and donation intervals) is evaluated independently prior to every donation session.
+              </p>
+            </div>
           </div>
 
           {verifyMsg && (
-            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-800 font-semibold">
-              {verifyMsg}
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-800 font-semibold flex items-center justify-between">
+              <span>{verifyMsg}</span>
+              <button onClick={() => setVerifyMsg(null)} className="text-[11px] text-emerald-700 underline font-bold ml-2 cursor-pointer">
+                Dismiss
+              </button>
             </div>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Document Type</label>
               <select
@@ -895,7 +1175,66 @@ export const DonorProfile: React.FC = () => {
                 className="w-full px-3.5 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-rose-500 focus:outline-hidden"
               />
             </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-semibold text-slate-700">Reviewing Blood Bank (Authorized)</label>
+                {loadingBloodBanks && <RefreshCw className="w-3 h-3 text-rose-600 animate-spin" />}
+              </div>
+              <select
+                value={preferredBloodBankId}
+                onChange={(e) => setPreferredBloodBankId(e.target.value)}
+                className="w-full px-3.5 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-rose-500 focus:outline-hidden bg-white font-medium"
+              >
+                <option value="">Auto-Assign (Nearest Authorized Blood Bank)</option>
+                {bloodBanks.map(b => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}{b.distanceKm !== undefined ? ` • ${b.distanceKm} km away` : (b.city ? ` (${b.city})` : '')}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {bloodBanks.length === 0 && !loadingBloodBanks && (
+              <div className="sm:col-span-3 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <span className="text-amber-900 font-medium">
+                  No verified blood centers found within your {travelRadiusKm} km radius.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAllBloodBanks(true);
+                    loadEligibleBloodBanks(latitude, longitude, travelRadiusKm, true);
+                  }}
+                  className="px-3 py-1 bg-white hover:bg-slate-50 border border-amber-300 text-amber-900 font-bold text-xs rounded-lg cursor-pointer"
+                >
+                  Show All Blood Banks
+                </button>
+              </div>
+            )}
           </div>
+
+          {/* Selected Blood Bank Preview Card */}
+          {(() => {
+            const selectedBank = bloodBanks.find(b => b.id === preferredBloodBankId);
+            if (!selectedBank) return null;
+            return (
+              <div className="p-3 bg-rose-50/50 border border-rose-200/80 rounded-xl text-xs space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-900">{selectedBank.name}</span>
+                  {selectedBank.distanceKm !== undefined && (
+                    <span className="px-2 py-0.5 bg-rose-100 text-rose-800 rounded font-bold text-[10px]">
+                      {selectedBank.distanceKm} km away
+                    </span>
+                  )}
+                </div>
+                <p className="text-slate-600 text-[11px]">{selectedBank.address}{selectedBank.city ? `, ${selectedBank.city}` : ''}</p>
+                {selectedBank.phone && (
+                  <p className="text-slate-500 text-[11px]">Contact: {selectedBank.phone}</p>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Standard HTML5 File Input Component with 4 Visible States */}
           <div className="border border-dashed border-slate-300 rounded-2xl p-5 bg-slate-50/60 space-y-3">
@@ -1090,35 +1429,61 @@ export const DonorProfile: React.FC = () => {
           </div>
         </div>
 
-        {/* Form Actions Bar with Compact Status & Single Save Button */}
-        <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+        {/* Form Actions Bar with Comprehensive State Machine */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-white rounded-2xl border border-slate-200 shadow-xs">
           <div className="text-xs font-semibold">
-            {saving ? (
-              <span className="text-rose-600 flex items-center space-x-1">
+            {formState === 'loading' ? (
+              <span className="text-slate-500 flex items-center space-x-1.5">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin text-rose-600" />
+                <span>Loading donor profile data...</span>
+              </span>
+            ) : formState === 'saving' || saving ? (
+              <span className="text-rose-600 font-bold flex items-center space-x-1.5">
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Saving...</span>
+                <span>Saving profile changes to database...</span>
+              </span>
+            ) : formState === 'saved_successfully' && !isDirty ? (
+              <span className="text-emerald-700 font-bold flex items-center space-x-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Saved successfully • Profile baseline synchronized</span>
+              </span>
+            ) : formState === 'save_failed' ? (
+              <span className="text-rose-700 font-bold flex items-center space-x-1.5">
+                <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
+                <span>Save failed • Edits retained, please retry</span>
               </span>
             ) : isDirty ? (
-              <span className="text-amber-600 font-bold flex items-center space-x-1">
-                <span className="w-2 h-2 rounded-full bg-amber-500" />
-                <span>Unsaved changes</span>
+              <span className="text-amber-700 font-bold flex items-center space-x-1.5">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                <span>Unsaved changes • Ready to save</span>
               </span>
             ) : (
-              <span className="text-emerald-600 flex items-center space-x-1">
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>All changes saved</span>
+              <span className="text-slate-600 flex items-center space-x-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-slate-400" />
+                <span>Saved / Up to date • No unsaved changes</span>
               </span>
             )}
           </div>
 
-          <button
-            type="submit"
-            disabled={!isDirty || saving}
-            className="px-6 py-2.5 rounded-xl font-bold text-xs text-white bg-rose-600 hover:bg-rose-700 shadow-md shadow-rose-600/20 flex items-center space-x-2 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            <span>{saving ? 'Saving...' : 'Save Profile Changes'}</span>
-          </button>
+          <div className="flex items-center space-x-2">
+            <button
+              type="submit"
+              disabled={!isDirty || saving || formState === 'saving'}
+              className="px-6 py-2.5 rounded-xl font-bold text-xs text-white bg-rose-600 hover:bg-rose-700 shadow-md shadow-rose-600/20 flex items-center space-x-2 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {saving || formState === 'saving' ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Saving...</span>
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  <span>Save Profile Changes</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
       </form>

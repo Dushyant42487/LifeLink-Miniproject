@@ -23,8 +23,10 @@ import {
   searchLocations,
   savePrescreening,
   getDigitalPass,
-  getNearbyHospitals
+  getNearbyHospitals,
+  cancelVerificationRequest
 } from '../controllers/donorController';
+import { getEligibleBloodBankDirectory } from '../controllers/bloodBankController';
 import { authenticateToken, requireRole } from '../middleware/auth';
 
 const router = Router();
@@ -34,9 +36,11 @@ router.use(requireRole(['donor']));
 
 router.get('/location-search', searchLocations);
 router.get('/nearby-hospitals', getNearbyHospitals);
+router.get('/eligible-blood-banks', getEligibleBloodBankDirectory);
 router.get('/profile', getDonorProfile);
 router.put('/profile', updateDonorProfile);
 router.post('/verify-blood-group', verifyBloodGroup);
+router.post('/cancel-verification', cancelVerificationRequest);
 router.post('/upload-proof', uploadProofDocument);
 router.get('/document/:docId', getProofDocument);
 

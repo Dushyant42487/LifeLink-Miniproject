@@ -1,12 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { donorApi, notificationsApi } from '../../services/api';
-import { AppNotification } from '../../types';
+import { useNotifications } from '../../contexts/NotificationContext';
 import { Droplet, Bell, LogOut, ChevronDown, Sparkles, Menu, X, ChevronRight, User, CheckCheck, Clock, ExternalLink, LayoutDashboard, UserCheck, History, Compass, AlertCircle } from 'lucide-react';
 
 export const Navbar: React.FC = () => {
   const { user, logout } = useAuth();
+  const { 
+    notifications, 
+    unreadCount, 
+    loading: loadingNotifs, 
+    markAsRead, 
+    markAllAsRead, 
+    connected
+  } = useNotifications();
   const navigate = useNavigate();
   const location = useLocation();
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -14,8 +21,6 @@ export const Navbar: React.FC = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const [activeSection, setActiveSection] = useState<string>('home');
-  const [notifications, setNotifications] = useState<AppNotification[]>([]);
-  const [loadingNotifs, setLoadingNotifs] = useState(false);
 
   const notifRef = useRef<HTMLDivElement | null>(null);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
@@ -42,7 +47,6 @@ export const Navbar: React.FC = () => {
       if (e.key === 'Escape') {
         setShowNotifCenter(false);
         setShowUserMenu(false);
-        setShowRoleMenu(false);
         setMobileMenuOpen(false);
       }
     };
@@ -104,36 +108,14 @@ export const Navbar: React.FC = () => {
     return 'Dashboard';
   };
 
-  // Fetch notifications
-  useEffect(() => {
-    if (user) {
-      fetchNotifications();
-    } else {
-      setNotifications([]);
-    }
-  }, [user, location.pathname]);
-
-  const fetchNotifications = async () => {
-    setLoadingNotifs(true);
-    const res = await notificationsApi.getNotifications();
-    if (res.success && res.notifications) {
-      setNotifications(res.notifications);
-    }
-    setLoadingNotifs(false);
-  };
-
   const handleMarkAsRead = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    await notificationsApi.markRead(id);
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+    await markAsRead(id);
   };
 
   const handleMarkAllRead = async () => {
-    await notificationsApi.markAllRead();
-    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    await markAllAsRead();
   };
-
-  const unreadCount = notifications.filter(n => !n.read).length;
 
   // Listen to scroll events to adjust navbar appearance & highlight active section
   useEffect(() => {
@@ -194,14 +176,14 @@ export const Navbar: React.FC = () => {
           
           {/* Brand Logo & Breadcrumbs */}
           <div className="flex items-center space-x-3">
-            <Link to={user ? getDashboardPath() : "/"} className="flex items-center space-x-2.5 group">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-rose-600 to-red-500 flex items-center justify-center shadow-md shadow-rose-500/20 group-hover:scale-105 transition-transform">
+            <Link to={user ? getDashboardPath() : "/"} className="flex items-center space-x-2.5 group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lifelink-600 rounded-xl">
+              <div className="w-9 h-9 rounded-xl bg-[#E81743] flex items-center justify-center shadow-md shadow-rose-600/25 group-hover:scale-105 transition-transform">
                 <Droplet className="w-5 h-5 text-white fill-white" />
               </div>
-              <div>
-                <span className="text-xl font-extrabold tracking-tight text-slate-900">Life<span className="text-rose-600">Link</span></span>
+              <div className="flex items-center">
+                <span className="text-xl font-extrabold tracking-tight text-slate-900">Life<span className="text-lifelink-600">Link</span></span>
                 {!isPortalPage && (
-                  <span className="hidden sm:inline-block ml-2 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-rose-50 text-rose-700 border border-rose-200/80 rounded-full">
+                  <span className="hidden sm:inline-flex items-center ml-2.5 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-lifelink-50 text-lifelink-700 border border-lifelink-200/80 rounded-full">
                     Regional Hub
                   </span>
                 )}
@@ -213,7 +195,7 @@ export const Navbar: React.FC = () => {
               <div className="hidden sm:flex items-center space-x-2 border-l border-slate-200 pl-3 ml-2 text-xs font-semibold text-slate-600">
                 <Link
                   to={user.role === 'hospital' ? '/hospital/dashboard' : user.role === 'blood_bank' ? '/blood-bank/dashboard' : '/donor/dashboard'}
-                  className="px-2 py-0.5 rounded bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer"
+                  className="px-2 py-0.5 rounded bg-lifelink-50 text-lifelink-700 hover:bg-lifelink-100 border border-lifelink-200 text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer"
                 >
                   {user.role === 'blood_bank' ? 'Blood Bank Portal' : `${user.role} Portal`}
                 </Link>
@@ -225,35 +207,43 @@ export const Navbar: React.FC = () => {
 
           {/* Navigation Links (Desktop — Shown ONLY on Public / Landing Pages) */}
           {!isPortalPage && (
-            <nav className="hidden md:flex items-center space-x-6 text-sm font-medium">
+            <nav className="hidden md:flex items-center space-x-1 sm:space-x-2 text-sm font-medium" role="navigation" aria-label="Main Navigation">
               <button 
                 onClick={() => scrollToSection('home')}
-                className={`transition-colors cursor-pointer ${
-                  isHomePage && activeSection === 'home' ? 'text-rose-600 font-bold' : 'text-slate-600 hover:text-rose-600'
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  isHomePage && activeSection === 'home' 
+                    ? 'text-lifelink-700 bg-lifelink-50/80 border border-lifelink-200/60 shadow-2xs font-bold' 
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
                 }`}
               >
                 Home
               </button>
               <button 
                 onClick={() => scrollToSection('portals')}
-                className={`transition-colors cursor-pointer ${
-                  isHomePage && activeSection === 'portals' ? 'text-rose-600 font-bold' : 'text-slate-600 hover:text-rose-600'
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  isHomePage && activeSection === 'portals' 
+                    ? 'text-lifelink-700 bg-lifelink-50/80 border border-lifelink-200/60 shadow-2xs font-bold' 
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
                 }`}
               >
                 Portals
               </button>
               <button 
                 onClick={() => scrollToSection('how-it-works')}
-                className={`transition-colors cursor-pointer ${
-                  isHomePage && activeSection === 'how-it-works' ? 'text-rose-600 font-bold' : 'text-slate-600 hover:text-rose-600'
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  isHomePage && activeSection === 'how-it-works' 
+                    ? 'text-lifelink-700 bg-lifelink-50/80 border border-lifelink-200/60 shadow-2xs font-bold' 
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
                 }`}
               >
                 How It Works
               </button>
               <button 
                 onClick={() => scrollToSection('awareness')}
-                className={`transition-colors cursor-pointer ${
-                  isHomePage && activeSection === 'awareness' ? 'text-rose-600 font-bold' : 'text-slate-600 hover:text-rose-600'
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  isHomePage && activeSection === 'awareness' 
+                    ? 'text-lifelink-700 bg-lifelink-50/80 border border-lifelink-200/60 shadow-2xs font-bold' 
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
                 }`}
               >
                 Awareness
@@ -276,7 +266,9 @@ export const Navbar: React.FC = () => {
                   >
                     <Bell className="w-4 h-4" />
                     {unreadCount > 0 && (
-                      <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-rose-600 ring-2 ring-white"></span>
+                      <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white text-[10px] font-extrabold flex items-center justify-center ring-2 ring-white shadow-xs">
+                        {unreadCount > 9 ? '9+' : unreadCount}
+                      </span>
                     )}
                   </button>
 
@@ -285,8 +277,14 @@ export const Navbar: React.FC = () => {
                     <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-slate-200 py-3 z-50 text-xs">
                       <div className="px-4 pb-2 border-b border-slate-100 flex items-center justify-between">
                         <div>
-                          <h4 className="font-bold text-slate-900 text-sm">Notifications</h4>
-                          <p className="text-[11px] text-slate-500">{unreadCount} unread update{unreadCount === 1 ? '' : 's'}</p>
+                          <div className="flex items-center space-x-1.5">
+                            <span 
+                              className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} 
+                              title={connected ? 'Real-Time SSE Connected' : 'Syncing'} 
+                            />
+                            <h4 className="font-bold text-slate-900 text-sm">Notifications</h4>
+                          </div>
+                          <p className="text-[11px] text-slate-500 mt-0.5">{unreadCount} unread update{unreadCount === 1 ? '' : 's'}</p>
                         </div>
                         {unreadCount > 0 && (
                           <button 
@@ -300,13 +298,13 @@ export const Navbar: React.FC = () => {
                       </div>
 
                       <div className="max-h-80 overflow-y-auto divide-y divide-slate-100">
-                        {loadingNotifs ? (
+                        {loadingNotifs && notifications.length === 0 ? (
                           <div className="p-4 text-center text-slate-400">Loading notifications...</div>
                         ) : notifications.length === 0 ? (
                           <div className="p-6 text-center text-slate-500">
                             <Bell className="w-8 h-8 mx-auto mb-2 text-slate-300" />
                             <p className="font-semibold">No notifications yet</p>
-                            <p className="text-[11px] text-slate-400 mt-0.5">Alerts & reminders will appear here.</p>
+                            <p className="text-[11px] text-slate-400 mt-0.5">Alerts & reminders will appear here in real-time.</p>
                           </div>
                         ) : (
                           notifications.map(n => (
@@ -316,6 +314,7 @@ export const Navbar: React.FC = () => {
                                 n.read ? 'bg-white hover:bg-slate-50/80' : 'bg-rose-50/30 hover:bg-rose-50/60 font-medium'
                               }`}
                               onClick={() => {
+                                if (!n.read) markAsRead(n.id);
                                 if (n.link) navigate(n.link);
                                 setShowNotifCenter(false);
                               }}
@@ -345,13 +344,14 @@ export const Navbar: React.FC = () => {
                         )}
                       </div>
 
-                      <div className="pt-2 px-4 border-t border-slate-100 text-center">
+                      <div className="pt-2.5 px-4 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+                        <span>Real-time portal updates</span>
                         <Link 
-                          to="/donor/profile" 
+                          to={user?.role === 'donor' ? '/donor/profile' : user?.role === 'hospital' ? '/hospital/dashboard' : '/blood-bank/dashboard'} 
                           onClick={() => setShowNotifCenter(false)}
-                          className="text-[11px] font-semibold text-slate-600 hover:text-rose-600 inline-flex items-center space-x-1"
+                          className="font-semibold text-rose-600 hover:text-rose-700 hover:underline inline-flex items-center space-x-1"
                         >
-                          <span>Manage Notification Preferences</span>
+                          <span>Preferences</span>
                           <ExternalLink className="w-3 h-3" />
                         </Link>
                       </div>
@@ -406,13 +406,13 @@ export const Navbar: React.FC = () => {
               <div className="flex items-center space-x-2">
                 <Link 
                   to="/login"
-                  className="px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 transition-colors"
+                  className="px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lifelink-600"
                 >
                   Sign In
                 </Link>
                 <Link 
                   to="/register"
-                  className="px-3.5 py-1.5 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-xs shadow-rose-500/20 transition-all hover:shadow-md"
+                  className="px-4 py-1.5 text-xs font-bold text-white bg-lifelink-600 hover:bg-lifelink-700 rounded-xl shadow-xs shadow-lifelink-600/25 transition-all hover:shadow-md hover:scale-[1.02] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lifelink-600"
                 >
                   Get Started
                 </Link>
@@ -422,8 +422,10 @@ export const Navbar: React.FC = () => {
             {/* Mobile Menu Toggle */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="md:hidden p-2 text-slate-600 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition-colors"
-              aria-label="Toggle Navigation Menu"
+              className="md:hidden p-2 text-slate-600 hover:text-lifelink-600 hover:bg-slate-100 rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lifelink-600"
+              aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
+              aria-expanded={mobileMenuOpen}
+              aria-controls="mobile-navigation"
             >
               {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
             </button>
@@ -434,7 +436,12 @@ export const Navbar: React.FC = () => {
 
         {/* Mobile Dropdown Navigation Drawer */}
         {mobileMenuOpen && (
-          <div className="md:hidden py-3 px-2 border-t border-slate-100 bg-white space-y-1 text-sm font-medium">
+          <div 
+            id="mobile-navigation" 
+            role="dialog" 
+            aria-label="Mobile Navigation"
+            className="md:hidden py-3 px-2 border-t border-slate-100 bg-white space-y-1 text-sm font-medium"
+          >
             {isPortalPage && user?.role === 'donor' ? (
               <>
                 <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Donor Navigation</div>
@@ -442,7 +449,7 @@ export const Navbar: React.FC = () => {
                   to="/donor/dashboard"
                   onClick={() => setMobileMenuOpen(false)}
                   className={`w-full text-left px-3 py-2 rounded-lg flex items-center space-x-2.5 text-xs font-semibold ${
-                    location.pathname === '/donor/dashboard' ? 'bg-rose-600 text-white font-bold' : 'text-slate-700 hover:bg-rose-50 hover:text-rose-600'
+                    location.pathname === '/donor/dashboard' ? 'bg-lifelink-600 text-white font-bold' : 'text-slate-700 hover:bg-lifelink-50 hover:text-lifelink-600'
                   }`}
                 >
                   <LayoutDashboard className="w-4 h-4" />
@@ -452,7 +459,7 @@ export const Navbar: React.FC = () => {
                   to="/donor/profile"
                   onClick={() => setMobileMenuOpen(false)}
                   className={`w-full text-left px-3 py-2 rounded-lg flex items-center space-x-2.5 text-xs font-semibold ${
-                    location.pathname === '/donor/profile' ? 'bg-rose-600 text-white font-bold' : 'text-slate-700 hover:bg-rose-50 hover:text-rose-600'
+                    location.pathname === '/donor/profile' ? 'bg-lifelink-600 text-white font-bold' : 'text-slate-700 hover:bg-lifelink-50 hover:text-lifelink-600'
                   }`}
                 >
                   <User className="w-4 h-4" />
@@ -462,7 +469,7 @@ export const Navbar: React.FC = () => {
                   to="/donor/eligibility"
                   onClick={() => setMobileMenuOpen(false)}
                   className={`w-full text-left px-3 py-2 rounded-lg flex items-center space-x-2.5 text-xs font-semibold ${
-                    location.pathname === '/donor/eligibility' ? 'bg-rose-600 text-white font-bold' : 'text-slate-700 hover:bg-rose-50 hover:text-rose-600'
+                    location.pathname === '/donor/eligibility' ? 'bg-lifelink-600 text-white font-bold' : 'text-slate-700 hover:bg-lifelink-50 hover:text-lifelink-600'
                   }`}
                 >
                   <UserCheck className="w-4 h-4" />
@@ -472,7 +479,7 @@ export const Navbar: React.FC = () => {
                   to="/donor/donations"
                   onClick={() => setMobileMenuOpen(false)}
                   className={`w-full text-left px-3 py-2 rounded-lg flex items-center space-x-2.5 text-xs font-semibold ${
-                    location.pathname === '/donor/donations' ? 'bg-rose-600 text-white font-bold' : 'text-slate-700 hover:bg-rose-50 hover:text-rose-600'
+                    location.pathname === '/donor/donations' ? 'bg-lifelink-600 text-white font-bold' : 'text-slate-700 hover:bg-lifelink-50 hover:text-lifelink-600'
                   }`}
                 >
                   <History className="w-4 h-4" />
@@ -482,7 +489,7 @@ export const Navbar: React.FC = () => {
                   to="/donor/camps"
                   onClick={() => setMobileMenuOpen(false)}
                   className={`w-full text-left px-3 py-2 rounded-lg flex items-center space-x-2.5 text-xs font-semibold ${
-                    location.pathname === '/donor/camps' ? 'bg-rose-600 text-white font-bold' : 'text-slate-700 hover:bg-rose-50 hover:text-rose-600'
+                    location.pathname === '/donor/camps' ? 'bg-lifelink-600 text-white font-bold' : 'text-slate-700 hover:bg-lifelink-50 hover:text-lifelink-600'
                   }`}
                 >
                   <Compass className="w-4 h-4" />
@@ -492,10 +499,10 @@ export const Navbar: React.FC = () => {
                   to="/donor/alerts"
                   onClick={() => setMobileMenuOpen(false)}
                   className={`w-full text-left px-3 py-2 rounded-lg flex items-center space-x-2.5 text-xs font-semibold ${
-                    location.pathname.includes('/alerts') ? 'bg-rose-600 text-white font-bold' : 'text-slate-700 hover:bg-rose-50 hover:text-rose-600'
+                    location.pathname.includes('/alerts') ? 'bg-lifelink-600 text-white font-bold' : 'text-slate-700 hover:bg-lifelink-50 hover:text-lifelink-600'
                   }`}
                 >
-                  <AlertCircle className="w-4 h-4 text-rose-500" />
+                  <AlertCircle className="w-4 h-4 text-lifelink-500" />
                   <span>Emergency Alerts</span>
                 </Link>
               </>
@@ -503,28 +510,52 @@ export const Navbar: React.FC = () => {
               <>
                 <button 
                   onClick={() => scrollToSection('home')}
-                  className="w-full text-left px-3 py-2 rounded-lg text-slate-700 hover:bg-rose-50 hover:text-rose-600 font-semibold"
+                  className={`w-full text-left px-3 py-2 rounded-lg font-semibold text-xs transition-colors ${
+                    activeSection === 'home' ? 'bg-lifelink-50 text-lifelink-700 font-bold' : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
                 >
                   Home
                 </button>
                 <button 
                   onClick={() => scrollToSection('portals')}
-                  className="w-full text-left px-3 py-2 rounded-lg text-slate-700 hover:bg-rose-50 hover:text-rose-600 font-semibold"
+                  className={`w-full text-left px-3 py-2 rounded-lg font-semibold text-xs transition-colors ${
+                    activeSection === 'portals' ? 'bg-lifelink-50 text-lifelink-700 font-bold' : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
                 >
                   Portals
                 </button>
                 <button 
                   onClick={() => scrollToSection('how-it-works')}
-                  className="w-full text-left px-3 py-2 rounded-lg text-slate-700 hover:bg-rose-50 hover:text-rose-600 font-semibold"
+                  className={`w-full text-left px-3 py-2 rounded-lg font-semibold text-xs transition-colors ${
+                    activeSection === 'how-it-works' ? 'bg-lifelink-50 text-lifelink-700 font-bold' : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
                 >
                   How It Works
                 </button>
                 <button 
                   onClick={() => scrollToSection('awareness')}
-                  className="w-full text-left px-3 py-2 rounded-lg text-slate-700 hover:bg-rose-50 hover:text-rose-600 font-semibold"
+                  className={`w-full text-left px-3 py-2 rounded-lg font-semibold text-xs transition-colors ${
+                    activeSection === 'awareness' ? 'bg-lifelink-50 text-lifelink-700 font-bold' : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
                 >
                   Awareness
                 </button>
+                <div className="pt-2 border-t border-slate-100 flex items-center space-x-2">
+                  <Link
+                    to="/login"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="flex-1 py-2 text-center text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg"
+                  >
+                    Sign In
+                  </Link>
+                  <Link
+                    to="/register"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="flex-1 py-2 text-center text-xs font-bold text-white bg-lifelink-600 hover:bg-lifelink-700 rounded-lg shadow-xs shadow-lifelink-600/25"
+                  >
+                    Get Started
+                  </Link>
+                </div>
               </>
             ) : null}
           </div>

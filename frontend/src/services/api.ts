@@ -94,11 +94,33 @@ export const apiFetch = async <T = any>(
   }
 };
 
+// Public Platform API Endpoints
+export const publicApi = {
+  getStats: (bloodGroup?: string) => {
+    const params = new URLSearchParams();
+    if (bloodGroup && bloodGroup !== 'all') params.append('bloodGroup', bloodGroup);
+    return apiFetch(`/public/stats${params.toString() ? `?${params.toString()}` : ''}`);
+  },
+  getAvailability: (bloodGroup?: string) => {
+    const params = new URLSearchParams();
+    if (bloodGroup && bloodGroup !== 'all') params.append('bloodGroup', bloodGroup);
+    return apiFetch(`/public/availability${params.toString() ? `?${params.toString()}` : ''}`);
+  },
+  getCamps: (city?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (city && city !== 'all') params.append('city', city);
+    if (search) params.append('search', search);
+    return apiFetch(`/public/camps?${params.toString()}`);
+  },
+  rsvpCamp: (campId: string) => apiFetch(`/public/camps/${campId}/rsvp`, { method: 'POST' }),
+  getLocations: () => apiFetch('/public/locations'),
+};
+
 // Donor API Endpoints
 export const donorApi = {
   getProfile: () => apiFetch('/donors/profile'),
   updateProfile: (data: any) => apiFetch('/donors/profile', { method: 'PUT', body: JSON.stringify(data) }),
-  verifyBloodGroup: (data: { documentType: string; documentNumber?: string; fileUrl: string }) => 
+  verifyBloodGroup: (data: { documentType: string; documentNumber?: string; fileUrl: string; preferredBloodBankId?: string }) => 
     apiFetch('/donors/verify-blood-group', { method: 'POST', body: JSON.stringify(data) }),
   uploadProofDocument: (data: { fileName: string; fileType: string; fileSize?: number; fileData: string }) =>
     apiFetch('/donors/upload-proof', { method: 'POST', body: JSON.stringify(data) }),
@@ -146,7 +168,19 @@ export const donorApi = {
     if (params?.lng !== undefined && params?.lng !== null) q.set('lng', String(params.lng));
     if (params?.radius !== undefined && params?.radius !== null) q.set('radius', String(params.radius));
     return apiFetch(`/donors/nearby-hospitals${q.toString() ? `?${q.toString()}` : ''}`);
-  }
+  },
+
+  // Eligible Blood Bank Directory & Verification Management
+  getEligibleBloodBanks: (params?: { lat?: number; lng?: number; radius?: number | string; q?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.lat !== undefined && params?.lat !== null) query.set('lat', String(params.lat));
+    if (params?.lng !== undefined && params?.lng !== null) query.set('lng', String(params.lng));
+    if (params?.radius !== undefined && params?.radius !== null) query.set('radius', String(params.radius));
+    if (params?.q) query.set('q', params.q);
+    return apiFetch(`/donors/eligible-blood-banks${query.toString() ? `?${query.toString()}` : ''}`);
+  },
+  cancelVerification: (reason?: string) => 
+    apiFetch('/donors/cancel-verification', { method: 'POST', body: JSON.stringify({ reason }) })
 };
 
 // Hospital API Endpoints
@@ -266,11 +300,36 @@ export const bloodBankApi = {
     return apiFetch(`/blood-bank/testing${queryStr}`);
   },
   updateTestingRecord: (id: string, data: any) => 
-    apiFetch(`/blood-bank/testing/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+    apiFetch(`/blood-bank/testing/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Smart Routing & Incoming Offers Desk
+  getOffers: (params?: { status?: string; urgency?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.status && params.status !== 'all') q.set('status', params.status);
+    if (params?.urgency && params.urgency !== 'all') q.set('urgency', params.urgency);
+    const queryStr = q.toString() ? `?${q.toString()}` : '';
+    return apiFetch(`/blood-bank/offers${queryStr}`);
+  },
+  respondToOffer: (id: string, data: { action: 'Accept' | 'Decline' | 'Partial'; quantityUnits?: number; reason?: string; notes?: string }) => 
+    apiFetch(`/blood-bank/offers/${id}/respond`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // Donor Verification Queue
+  getDonorVerificationQueue: () => apiFetch('/blood-bank/donors/verification-queue'),
+  verifyDonor: (donorId: string, data: { status: 'Verified' | 'Rejected' | 'Needs More Info'; notes?: string; rejectionReason?: string; bloodGroup?: string }) => 
+    apiFetch(`/blood-bank/donors/${donorId}/verify`, { method: 'POST', body: JSON.stringify(data) })
 };
 
 export const notificationsApi = {
   getNotifications: () => apiFetch('/notifications'),
   markRead: (id: string) => apiFetch(`/notifications/${id}/read`, { method: 'PATCH' }),
   markAllRead: () => apiFetch('/notifications/read-all', { method: 'PATCH' })
+};
+
+export const adminApi = {
+  getVerificationRequests: () => apiFetch('/admin/verification-requests'),
+  reassignDonor: (data: { donorId: string; targetBloodBankId: string; reason?: string }) => 
+    apiFetch('/admin/reassign-donor', { method: 'POST', body: JSON.stringify(data) }),
+  getSmartRoutingOverview: () => apiFetch('/admin/smart-routing'),
+  escalateSmartRouting: (requestId: string, data: { reason?: string; radiusKm?: number }) => 
+    apiFetch(`/admin/smart-routing/${requestId}/escalate`, { method: 'POST', body: JSON.stringify(data) })
 };

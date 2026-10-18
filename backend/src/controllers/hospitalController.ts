@@ -4,6 +4,8 @@ import { db } from '../models/store';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { BloodRequest, PatientSample, RequestMessage, BloodGroup, BloodComponent, HospitalStorageEntry, StorageEntryStatus } from '../models/types';
 import { isValidCoordinate, parseCoordinates, calcHaversineKm } from '../utils/geo';
+import { notificationService } from '../services/notificationService';
+import { smartRoutingService } from '../services/smartRoutingService';
 export { calcHaversineKm };
 
 // Authoritative calculation of reserved units strictly scoped to active hospital requisitions
@@ -237,9 +239,26 @@ export const createBloodRequest = async (req: AuthenticatedRequest, res: Respons
     return res.status(400).json({ success: false, error: `Invalid blood group: ${bloodGroup}` });
   }
 
-  const validComponents = ['RBC', 'Plasma', 'Platelets', 'PRBC', 'Cryo', 'Whole Blood'];
+  const validComponents = [
+    'RBC', 'Plasma', 'Platelets', 'PRBC', 'Cryo', 'Cryoprecipitate', 
+    'Whole Blood', 'Red Blood Cells', 'Red Blood Cells (PRBC)'
+  ];
   if (!validComponents.includes(component)) {
     return res.status(400).json({ success: false, error: `Invalid blood component: ${component}` });
+  }
+
+  let canonicalComponent: BloodComponent = 'RBC';
+  const cNorm = (component || '').trim().toLowerCase();
+  if (cNorm.includes('whole')) {
+    canonicalComponent = 'Whole Blood';
+  } else if (cNorm.includes('plasma') || cNorm.includes('ffp')) {
+    canonicalComponent = 'Plasma';
+  } else if (cNorm.includes('platelet')) {
+    canonicalComponent = 'Platelets';
+  } else if (cNorm.includes('cryo')) {
+    canonicalComponent = 'Cryoprecipitate';
+  } else {
+    canonicalComponent = 'RBC';
   }
 
   const qty = Number(quantityUnits);
@@ -252,11 +271,23 @@ export const createBloodRequest = async (req: AuthenticatedRequest, res: Respons
     return res.status(401).json({ success: false, error: 'Unauthorized facility' });
   }
 
-  const hosp = db.hospitals.find(h => h.id === hospitalId) || {
-    id: hospitalId,
-    hospitalName: req.user?.name || 'Verified Hospital'
-  };
-  const bb = db.bloodBanks.find(b => b.id === bloodBankId) || db.bloodBanks[0];
+  const hosp = db.hospitals.find(h => h.id === hospitalId);
+  if (!hosp) {
+    return res.status(404).json({ success: false, error: 'Hospital organization profile not found.' });
+  }
+
+  // Phase 2.2: Determine the hospital's location
+  // Use the authenticated hospital organization's persisted location and valid coordinates.
+  // If the organization has no usable location, do not fall back silently to the current location of a hospital staff member or an arbitrary coordinate.
+  if (hosp.latitude === undefined || hosp.longitude === undefined || !isValidCoordinate(hosp.latitude, hosp.longitude)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Hospital organization location is not configured or has invalid geographic coordinates. Please configure your facility location in Hospital Profile before submitting requisitions.',
+      needsLocationConfig: true
+    });
+  }
+
+  const bb = bloodBankId ? db.bloodBanks.find(b => b.id === bloodBankId) : undefined;
 
   // Check Idempotency-Key support for network retries and timeout recovery
   const rawIdempotencyKey = (req.headers['idempotency-key'] || req.body.idempotencyKey) as string | undefined;
@@ -340,18 +371,19 @@ export const createBloodRequest = async (req: AuthenticatedRequest, res: Respons
   }
 
   const now = new Date().toISOString();
-  const hospName = (hosp as any).hospitalName || (hosp as any).name || req.user?.name || 'Hospital';
+  const hospName = hosp.hospitalName || hosp.name || req.user?.name || 'Hospital';
 
   const newRequest: BloodRequest = {
     id: reqId,
     hospitalId: hosp.id,
     hospitalName: hospName,
-    bloodBankId: bb.id,
-    bloodBankName: bb.bloodBankName,
+    bloodBankId: targetUnit ? targetUnit.bloodBankId : (bb ? bb.id : undefined),
+    bloodBankName: targetUnit ? targetUnit.bloodBankName : (bb ? (bb.bloodBankName || bb.name) : undefined),
     bloodGroup,
-    component,
+    component: canonicalComponent,
     quantityUnits: Number(quantityUnits),
-    fulfilledUnits: 0,
+    fulfilledUnits: targetUnit ? 1 : 0,
+    remainingUnitsToFulfill: targetUnit ? Math.max(0, Number(quantityUnits) - 1) : Number(quantityUnits),
     urgency: urgency || 'Routine',
     patientReferenceId: normalizedPatientRef,
     department: department ? department.trim() : 'General Ward',
@@ -359,14 +391,18 @@ export const createBloodRequest = async (req: AuthenticatedRequest, res: Respons
     status: targetUnit ? 'Reserved' : 'Pending',
     assignedUnitIds: assignedUnits,
     notes,
+    isAutoRouted: !targetUnit,
+    routingStatus: targetUnit ? 'Completed' : 'Pending Candidate',
+    routedBankOffers: [],
+    routingLogs: [],
     createdAt: now,
     updatedAt: now,
     timeline: [
       {
-        status: 'Pending',
+        status: targetUnit ? 'Reserved' : 'Pending',
         updatedAt: now,
         note: targetUnitId
-          ? `Requisition for unit ${targetUnitId} (${bloodGroup} ${component}) submitted by ${hospName} to ${bb.bloodBankName}`
+          ? `Requisition for unit ${targetUnitId} (${bloodGroup} ${component}) submitted by ${hospName} to ${targetUnit.bloodBankName}`
           : `Blood request for ${quantityUnits} unit(s) of ${bloodGroup} ${component} submitted by ${hospName}`,
         actor: hospName
       }
@@ -377,28 +413,38 @@ export const createBloodRequest = async (req: AuthenticatedRequest, res: Respons
     (newRequest as any).idempotencyKey = idempotencyKey;
   }
 
+  // Canonical requisition persisted first
   db.bloodRequests.unshift(newRequest);
 
-  // If Emergency, create emergency notification for blood bank
-  if (urgency === 'Emergency') {
-    db.notifications.unshift({
-      id: `NOTIF-${Date.now()}`,
-      userId: bb.id,
-      title: `EMERGENCY BLOOD REQUEST: ${bloodGroup} ${component}`,
-      message: `${hospName} created an Emergency request for ${quantityUnits} units of ${bloodGroup} ${component}.`,
-      type: 'emergency',
-      priority: 'urgent',
-      read: false,
-      createdAt: now,
-      link: '/blood-bank/hospital-requests'
-    });
+  let routingMessage = 'Blood request submitted successfully';
+
+  if (!targetUnitId) {
+    // Phase 2: Automatic smart blood bank routing
+    const routingResult = await smartRoutingService.dispatchRoutingOffers(newRequest);
+    if (routingResult.noCandidates) {
+      routingMessage = `Requisition created (${reqId}). No eligible blood banks with released ${bloodGroup} ${component} found within regional radius; request flagged for manual review.`;
+    } else {
+      routingMessage = `Requisition created (${reqId}). Smart routing dispatched offers to ${routingResult.offersCreated.length} nearby eligible blood bank(s) within ${routingResult.searchRadiusKm} km.`;
+    }
+  } else {
+    // If specific target unit requested and emergency, notify target bank
+    if (urgency === 'Emergency' && targetUnit) {
+      await notificationService.dispatchNotification({
+        userId: targetUnit.bloodBankId,
+        title: `EMERGENCY BLOOD REQUEST: ${bloodGroup} ${component}`,
+        message: `${hospName} created an Emergency request for unit ${targetUnit.id} (${bloodGroup} ${component}).`,
+        type: 'emergency',
+        priority: 'urgent',
+        link: '/blood-bank/requests'
+      });
+    }
   }
 
   db.saveSnapshot();
 
   res.status(201).json({
     success: true,
-    message: 'Blood request submitted successfully',
+    message: routingMessage,
     request: newRequest
   });
 };
@@ -1002,6 +1048,11 @@ export const confirmHospitalReceipt = async (req: AuthenticatedRequest, res: Res
   request.status = 'Fulfilled';
   request.fulfilledUnits = request.quantityUnits;
   request.updatedAt = now;
+  request.receiptConfirmation = {
+    confirmedAt: now,
+    confirmedBy: req.user?.email || req.user?.name || 'Hospital Clinical Receiving Staff',
+    notes: notes || 'Hospital clinical staff confirmed receipt of shipment. Physical units, pack seals, and cold-chain temperature verified.'
+  };
   request.timeline.push({
     status: 'Fulfilled',
     updatedAt: now,
@@ -1119,16 +1170,13 @@ export const reportHospitalDiscrepancy = async (req: AuthenticatedRequest, res: 
 
   // Create high-priority alert for the Blood Bank
   if (request.bloodBankId) {
-    db.notifications.unshift({
-      id: `NOTIF-${Date.now()}`,
+    await notificationService.dispatchNotification({
       userId: request.bloodBankId,
       title: `DISCREPANCY ALERT: Requisition ${request.id}`,
       message: `${request.hospitalName} reported a handoff issue: ${reportSummary}`,
       type: 'emergency',
       priority: 'urgent',
-      read: false,
-      createdAt: now,
-      link: `/blood-bank/hospital-requests?requestId=${request.id}`
+      link: `/blood-bank/requests?requestId=${request.id}`
     });
   }
 

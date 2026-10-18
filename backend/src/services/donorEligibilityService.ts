@@ -18,7 +18,8 @@ export interface ComponentEligibilityResult {
 
 export interface DonorEligibilityAssessment {
   isEligible: boolean;
-  verificationStatus: 'Unverified' | 'Pending Verification' | 'Verified' | 'Rejected';
+  reasons: string[];
+  verificationStatus: 'Unverified' | 'Pending Verification' | 'Verified' | 'Rejected' | 'Needs More Info';
   isVerified: boolean;
   verificationRequired: boolean;
   bloodGroup: string;
@@ -36,22 +37,22 @@ export interface DonorEligibilityAssessment {
  * Authoritative LifeLink Donor Eligibility Calculation Engine
  * 
  * Rules:
- * 1. Verification is a mandatory precondition: Unverified or Pending donors are NEVER eligible.
+ * 1. Verification is a mandatory precondition: Unverified, Pending, or Needs More Info donors are NEVER eligible.
  * 2. Weight clearance: Donor weight must be at least 50 kg.
  * 3. Cooldown window: 56 days for Whole Blood, 14 days for Platelet Apheresis from last donation.
  * 4. Clinical pre-screening: Medical flags require review and prevent automated clearance.
  */
 export function calculateDonorEligibility(donor: DonorProfile, now: Date = new Date()): DonorEligibilityAssessment {
   // 1. Determine Authoritative Verification Status
-  let verificationStatus: 'Unverified' | 'Pending Verification' | 'Verified' | 'Rejected' = 'Unverified';
+  let verificationStatus: 'Unverified' | 'Pending Verification' | 'Verified' | 'Rejected' | 'Needs More Info' = 'Unverified';
 
-  if (donor.totalDonationsCount && donor.totalDonationsCount > 0) {
-    // Existing donors with established donation history records are verified by definition
-    verificationStatus = 'Verified';
+  if (donor.verificationStatus) {
+    verificationStatus = donor.verificationStatus as any;
   } else if (donor.bloodGroupVerificationStatus) {
-    verificationStatus = donor.bloodGroupVerificationStatus;
-  } else if (donor.verificationStatus) {
-    verificationStatus = donor.verificationStatus;
+    verificationStatus = donor.bloodGroupVerificationStatus as any;
+  } else if (donor.totalDonationsCount && donor.totalDonationsCount > 0) {
+    // Existing donors with established donation history records default to verified if status not set
+    verificationStatus = 'Verified';
   } else {
     verificationStatus = 'Unverified';
   }
@@ -137,6 +138,8 @@ export function calculateDonorEligibility(donor: DonorProfile, now: Date = new D
         ? 'Verification Pending Review' 
         : verificationStatus === 'Rejected'
         ? 'Verification Rejected'
+        : verificationStatus === 'Needs More Info'
+        ? 'Additional Information Required'
         : 'Verification Required';
     }
     if (weightDeferral) return 'Deferred - Weight below 50kg';
@@ -159,6 +162,9 @@ export function calculateDonorEligibility(donor: DonorProfile, now: Date = new D
     } else if (verificationStatus === 'Rejected') {
       deferralReason = (donor as any).rejectionReason || 'Submitted blood group verification document could not be verified.';
       nextAction = 'Please upload a clear official lab report or medical certificate from your profile page.';
+    } else if (verificationStatus === 'Needs More Info') {
+      deferralReason = `Additional information required (Needs More Info): ${(donor as any).verificationNotes || 'Clearer documentation requested by reviewer'}`;
+      nextAction = 'Please review reviewer feedback and upload the requested documentation in My Profile.';
     } else {
       deferralReason = 'Donor verification required. Please submit blood group verification proof to confirm eligibility.';
       nextAction = 'Navigate to your Profile and upload official blood group proof (lab report, government donor card) to complete verification.';
@@ -185,6 +191,7 @@ export function calculateDonorEligibility(donor: DonorProfile, now: Date = new D
 
   return {
     isEligible: isOverallEligible,
+    reasons: deferralReason ? [deferralReason] : [],
     verificationStatus,
     isVerified,
     verificationRequired: !isVerified,

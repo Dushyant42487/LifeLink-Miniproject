@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { NotificationProvider } from './contexts/NotificationContext';
 import { Navbar } from './components/common/Navbar';
 import { Sidebar } from './components/common/Sidebar';
 
@@ -81,6 +82,8 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; allowedRoles?: UserR
   return <>{children}</>;
 };
 
+import { EmergencyAlertBanner } from './components/common/EmergencyAlertBanner';
+
 // Main Layout Wrapper
 const MainLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
@@ -92,6 +95,7 @@ const MainLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
       <Navbar />
+      <EmergencyAlertBanner />
       <div className="flex-1 flex">
         {showSidebar && <Sidebar />}
         <main className={`flex-1 ${isPublicPage ? 'w-full' : 'p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full'}`}>
@@ -105,9 +109,10 @@ const MainLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 export const App: React.FC = () => {
   return (
     <AuthProvider>
-      <Router>
-        <MainLayout>
-          <Routes>
+      <NotificationProvider>
+        <Router>
+          <MainLayout>
+            <Routes>
             {/* ========================================================= */}
             {/* 1. PUBLIC / LANDING MODULE                                 */}
             {/* ========================================================= */}
@@ -267,6 +272,7 @@ export const App: React.FC = () => {
           </Routes>
         </MainLayout>
       </Router>
+      </NotificationProvider>
     </AuthProvider>
   );
 };

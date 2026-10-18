@@ -19,6 +19,19 @@ export default {
           800: '#B91C1C',
           900: '#991B1B',
         },
+        lifelink: {
+          DEFAULT: '#E81743',
+          50: '#FFF1F4',
+          100: '#FFE4E8',
+          200: '#FECDD6',
+          300: '#FDA4B6',
+          400: '#FB718F',
+          500: '#F43F68',
+          600: '#E81743', // LifeLink crimson primary
+          700: '#BF0F36',
+          800: '#9E102E',
+          900: '#84122C',
+        },
         coral: {
           50: '#FFF7F7',
           100: '#FFEBEA',

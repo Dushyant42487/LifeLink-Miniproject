@@ -5,13 +5,14 @@ import { AuthenticatedRequest } from '../middleware/auth';
 import { EmergencyResponse } from '../models/types';
 import { isValidCoordinate, parseCoordinates, calcHaversineKm } from '../utils/geo';
 import { syncDonorAuthoritativeEligibility } from '../services/donorEligibilityService';
+import { notificationService } from '../services/notificationService';
 
 export const getDonorProfile = async (req: AuthenticatedRequest, res: Response) => {
   await safeSupabaseSync();
 
   const donor = db.donors.find(d => d.id === req.user?.id);
   if (!donor) return res.status(404).json({ success: false, error: 'Donor profile not found' });
-  
+
   syncDonorAuthoritativeEligibility(donor);
   const { passwordHash, ...data } = donor;
 
@@ -29,10 +30,22 @@ export const updateDonorProfile = async (req: AuthenticatedRequest, res: Respons
   // Security: Ignore client-supplied eligibility flags and verification status overrides
   // isEligible, bloodGroupVerificationStatus, verificationStatus, verifiedBy, verifiedAt cannot be modified by donor
 
+  const newAddress = address !== undefined ? String(address).trim() : donor.address;
+  const newCity = city !== undefined ? String(city).trim() : donor.city;
+  const newState = state !== undefined ? String(state).trim() : donor.state;
+  const newPostalCode = postalCode !== undefined ? String(postalCode).trim() : donor.postalCode;
+
+  const addressChanged = (address !== undefined && String(address).trim() !== (donor.address || '').trim()) ||
+    (city !== undefined && String(city).trim() !== (donor.city || '').trim()) ||
+    (postalCode !== undefined && String(postalCode).trim() !== (donor.postalCode || '').trim());
+
+  let geocodingError: string | null = null;
+
   if (latitude !== undefined || longitude !== undefined) {
     if (latitude === null && longitude === null) {
       donor.latitude = undefined;
       donor.longitude = undefined;
+      donor.geocodingStatus = undefined;
     } else {
       const coordParsed = parseCoordinates(latitude, longitude);
       if (coordParsed.error) {
@@ -40,6 +53,43 @@ export const updateDonorProfile = async (req: AuthenticatedRequest, res: Respons
       }
       donor.latitude = coordParsed.lat;
       donor.longitude = coordParsed.lng;
+      donor.geocodingStatus = 'manual';
+    }
+  } else if (addressChanged) {
+    // Address was edited without providing new coordinates:
+    // Stale coordinates for a different address must not be kept!
+    donor.latitude = undefined;
+    donor.longitude = undefined;
+
+    // Resolve address coordinates via Nominatim geocoding
+    const query = [newAddress, newCity, newState, newPostalCode].filter(Boolean).join(', ');
+    if (query) {
+      try {
+        const geoRes = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`,
+          {
+            headers: { 'User-Agent': 'LifeLink-Blood-Portal/1.0' },
+            signal: AbortSignal.timeout(3000)
+          }
+        );
+        if (geoRes.ok) {
+          const geoData: any = await geoRes.json();
+          if (Array.isArray(geoData) && geoData.length > 0 && isValidCoordinate(geoData[0].lat, geoData[0].lon)) {
+            donor.latitude = parseFloat(geoData[0].lat);
+            donor.longitude = parseFloat(geoData[0].lon);
+            donor.geocodingStatus = 'resolved';
+          } else {
+            donor.geocodingStatus = 'failed';
+            geocodingError = `Coordinates could not be resolved for address: ${query}`;
+          }
+        } else {
+          donor.geocodingStatus = 'failed';
+          geocodingError = 'Geocoding service unavailable.';
+        }
+      } catch {
+        donor.geocodingStatus = 'failed';
+        geocodingError = 'Geocoding request timed out.';
+      }
     }
   }
 
@@ -55,13 +105,36 @@ export const updateDonorProfile = async (req: AuthenticatedRequest, res: Respons
   if (travelRadiusKm !== undefined) donor.travelRadiusKm = Number(travelRadiusKm);
   if (pauseInvitations !== undefined) donor.pauseInvitations = Boolean(pauseInvitations);
 
+  if (req.body.preferredBloodBankId !== undefined) {
+    if (req.body.preferredBloodBankId === null || req.body.preferredBloodBankId === '') {
+      donor.preferredBloodBankId = undefined;
+      donor.preferredBloodBankName = undefined;
+    } else {
+      const pBank = db.bloodBanks.find(b => b.id === req.body.preferredBloodBankId);
+      if (pBank) {
+        donor.preferredBloodBankId = pBank.id;
+        donor.preferredBloodBankName = pBank.name || pBank.bloodBankName;
+        // If unassigned, assign to preferred
+        if (!donor.assignedBloodBankId || donor.verificationStatus === 'Unverified') {
+          donor.assignedBloodBankId = pBank.id;
+          donor.assignedBloodBankName = pBank.name || pBank.bloodBankName;
+        }
+      }
+    }
+  }
+
   // Recalculate authoritative eligibility after updates (e.g. weight changes)
   syncDonorAuthoritativeEligibility(donor);
 
   const { passwordHash, ...data } = donor;
   db.saveSnapshot();
 
-  res.json({ success: true, message: 'Profile updated successfully', donor: data });
+  res.json({
+    success: true,
+    message: geocodingError ? `Profile updated with warning: ${geocodingError}` : 'Profile updated successfully',
+    geocodingStatus: donor.geocodingStatus,
+    donor: data
+  });
 };
 
 export const getDonorEligibility = async (req: AuthenticatedRequest, res: Response) => {
@@ -84,7 +157,7 @@ export const getDonorHistory = async (req: AuthenticatedRequest, res: Response) 
 
   const donorId = req.user?.id;
   const donor = db.donors.find(d => d.id === donorId);
-  if (!donor)  return res.status(404).json({ success: false, error: 'Donor not found' });
+  if (!donor) return res.status(404).json({ success: false, error: 'Donor not found' });
 
   // Find units where donorId matches
   const units = db.bloodUnits.filter(u => u.donorId === donorId);
@@ -115,7 +188,7 @@ export const getEmergencyAlertsForDonor = async (req: AuthenticatedRequest, res:
   await safeSupabaseSync();
 
   const donor = db.donors.find(d => d.id === req.user?.id);
-  
+
   // Show active emergency alerts matching blood group or universal O-
   const activeAlerts = db.emergencyAlerts.map(alert => {
     const hasResponded = db.emergencyResponses.some(r => r.alertId === alert.id && r.donorId === donor?.id);
@@ -135,14 +208,14 @@ export const respondToEmergencyAlert = async (req: AuthenticatedRequest, res: Re
   const { alertId } = req.body;
   const donor = db.donors.find(d => d.id === req.user?.id);
 
-  if (!donor)  return res.status(404).json({ success: false, error: 'Donor profile not found' });
+  if (!donor) return res.status(404).json({ success: false, error: 'Donor profile not found' });
 
   const alert = db.emergencyAlerts.find(a => a.id === alertId);
-  if (!alert)  return res.status(404).json({ success: false, error: 'Emergency alert not found' });
+  if (!alert) return res.status(404).json({ success: false, error: 'Emergency alert not found' });
 
   const existing = db.emergencyResponses.find(r => r.alertId === alertId && r.donorId === donor.id);
   if (existing) {
-  
+
     return res.json({ success: true, message: 'You have already responded to this emergency alert', response: existing });
   }
 
@@ -247,19 +320,15 @@ export const createCampRequest = async (req: AuthenticatedRequest, res: Response
 
   db.campRequests.unshift(newRequest);
 
-  // Dispatch notification to the target blood bank or all blood banks
-  db.notifications.unshift({
-    id: `notif-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+  // Dispatch real-time notification to the target blood bank
+  await notificationService.dispatchNotification({
     userId: assignedBankId || 'role:blood_bank',
     title: 'New Blood Camp Request',
     message: `${newRequest.organizationName} submitted a camp request for ${newRequest.proposedDate} in ${newRequest.city}.`,
     type: 'camp',
     priority: 'medium',
-    read: false,
-    createdAt: new Date().toISOString()
+    link: '/blood-bank/collections'
   });
-
-  db.saveSnapshot();
 
   res.status(201).json({
     success: true,
@@ -336,19 +405,14 @@ export const registerForCamp = async (req: AuthenticatedRequest, res: Response) 
   camp.registeredCount = (camp.registeredCount || 0) + 1;
 
   // Add Notification
-  db.notifications.unshift({
-    id: `NOTIF-${Date.now()}`,
+  await notificationService.dispatchNotification({
     userId: donor.id,
     title: 'Camp Registration Confirmed',
     message: `You are registered for "${camp.title}" on ${camp.startDate} at ${camp.location}.`,
     type: 'camp',
     priority: 'medium',
-    read: false,
-    createdAt: new Date().toISOString(),
     link: '/donor/camps'
   });
-
-  db.saveSnapshot();
 
   res.json({
     success: true,
@@ -420,19 +484,44 @@ export const markAllNotificationsAsRead = async (req: AuthenticatedRequest, res:
   res.json({ success: true, message: 'All notifications marked as read.' });
 };
 
-// Blood Group Verification Handler
+// Blood Group Verification Handlerx
 export const verifyBloodGroup = async (req: AuthenticatedRequest, res: Response) => {
   const donor = db.donors.find(d => d.id === req.user?.id);
   if (!donor) return res.status(404).json({ success: false, error: 'Donor profile not found' });
 
-  const { documentType, documentNumber } = req.body;
+  const { documentType, documentNumber, preferredBloodBankId } = req.body;
   const fileUrl = req.body.fileUrl || req.body.bloodGroupProofDocUrl;
   if (!documentType || !fileUrl) {
     return res.status(400).json({ success: false, error: 'Please provide document type and upload proof.' });
   }
 
+  // Resolve assigned blood bank: preferred choice, or existing assignment, or city match, or first bank
+  let targetBank = db.bloodBanks.find(b => b.id === preferredBloodBankId);
+  if (!targetBank && donor.preferredBloodBankId) {
+    targetBank = db.bloodBanks.find(b => b.id === donor.preferredBloodBankId);
+  }
+  if (!targetBank && donor.assignedBloodBankId) {
+    targetBank = db.bloodBanks.find(b => b.id === donor.assignedBloodBankId);
+  }
+  if (!targetBank && donor.city) {
+    targetBank = db.bloodBanks.find(b => b.city && b.city.toLowerCase() === donor.city.toLowerCase());
+  }
+  if (!targetBank) {
+    targetBank = db.bloodBanks[0];
+  }
+
+  const assignedBankId = targetBank?.id || 'bb-1';
+  const assignedBankName = targetBank?.bloodBankName || targetBank?.name || 'Regional Blood Center';
+
   donor.bloodGroupVerificationStatus = 'Pending Verification';
   donor.verificationStatus = 'Pending Verification';
+  donor.assignedBloodBankId = assignedBankId;
+  donor.assignedBloodBankName = assignedBankName;
+  if (preferredBloodBankId && targetBank) {
+    donor.preferredBloodBankId = targetBank.id;
+    donor.preferredBloodBankName = assignedBankName;
+  }
+  donor.verificationSubmittedAt = new Date().toISOString();
   donor.bloodGroupProofDocUrl = fileUrl;
   (donor as any).proofDocumentType = documentType;
   if (documentNumber) (donor as any).proofDocumentNumber = documentNumber;
@@ -441,11 +530,50 @@ export const verifyBloodGroup = async (req: AuthenticatedRequest, res: Response)
   const assessment = syncDonorAuthoritativeEligibility(donor);
   db.saveSnapshot();
 
+  // Dispatch real-time notification to the assigned blood bank
+  await notificationService.dispatchNotification({
+    userId: assignedBankId,
+    title: 'New Donor Verification Submission',
+    message: `Donor ${donor.name} (${donor.bloodGroup || 'Unspecified'}) submitted verification documents for review.`,
+    type: 'verification',
+    priority: 'medium',
+    link: '/blood-bank/collections'
+  });
+
   res.json({
     success: true,
-    message: 'Blood group verification document submitted successfully. An authorized blood bank reviewer will verify your proof within 24-48 hours.',
+    message: `Blood group verification document submitted successfully to ${assignedBankName}. An authorized blood bank reviewer will verify your proof within 24-48 hours.`,
     status: 'Pending Verification',
+    assignedBloodBankId: assignedBankId,
+    assignedBloodBank: {
+      id: assignedBankId,
+      name: assignedBankName
+    },
     eligibility: assessment
+  });
+};
+
+// Cancel Pending Verification Request
+export const cancelVerificationRequest = async (req: AuthenticatedRequest, res: Response) => {
+  await safeSupabaseSync();
+
+  const donor = db.donors.find(d => d.id === req.user?.id);
+  if (!donor) return res.status(404).json({ success: false, error: 'Donor profile not found' });
+
+  if (donor.verificationStatus === 'Verified') {
+    return res.status(400).json({ success: false, error: 'Verified donor profiles cannot be cancelled.' });
+  }
+
+  donor.verificationStatus = 'Cancelled';
+  donor.bloodGroupVerificationStatus = 'Cancelled';
+  donor.verificationNotes = 'Verification request withdrawn by donor.';
+  syncDonorAuthoritativeEligibility(donor);
+  db.saveSnapshot();
+
+  res.json({
+    success: true,
+    message: 'Verification request cancelled successfully.',
+    verificationStatus: 'Cancelled'
   });
 };
 
@@ -739,7 +867,7 @@ export const getNearbyHospitals = async (req: AuthenticatedRequest, res: Respons
 
   const { lat, lng, radius } = req.query;
 
-  if (lat !== undefined && lng !== undefined && lat !== '' && lng !== '') {
+  if ((lat !== undefined && lat !== '') || (lng !== undefined && lng !== '')) {
     const coordParsed = parseCoordinates(lat, lng);
     if (coordParsed.error) {
       return res.status(400).json({ success: false, error: coordParsed.error });

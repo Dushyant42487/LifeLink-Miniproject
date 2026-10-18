@@ -3,7 +3,7 @@ import { bloodBankApi } from '../../services/api';
 import { BloodRequest, BloodDispatch, BloodGroup, BloodComponent } from '../../types';
 import { StatusBadge } from '../../components/common/StatusBadge';
 import { useAuth } from '../../contexts/AuthContext';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { 
   FileText, 
   CheckCircle2, 
@@ -29,6 +29,10 @@ import {
 
 export const HospitalRequestsHub: React.FC = () => {
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
+  const urlTab = searchParams.get('tab');
+  const targetRequestId = searchParams.get('requestId') || searchParams.get('selected');
+
   const facilityTitle = user?.name || (user as any)?.bloodBankName || 'Regional Blood Center';
   const facilityReg = (user as any)?.registrationId ? `(${(user as any).registrationId})` : '';
 
@@ -44,11 +48,28 @@ export const HospitalRequestsHub: React.FC = () => {
   const [actionLoading, setActionLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Tabs & Filters
-  const [activeTab, setActiveTab] = useState<'all' | 'emergency' | 'reserved' | 'prepared' | 'dispatched' | 'matrix'>('all');
+  // Tabs & Filters (mapped from URL parameters where available)
+  const resolveInitialTab = (): 'all' | 'offers' | 'emergency' | 'reserved' | 'prepared' | 'dispatched' | 'matrix' => {
+    if (urlTab === 'offers' || urlTab === 'incoming' || urlTab === 'routed' || urlTab === 'active') return 'offers';
+    if (urlTab === 'emergency' || urlTab === 'stat') return 'emergency';
+    if (urlTab === 'reserved') return 'reserved';
+    if (urlTab === 'prepared') return 'prepared';
+    if (urlTab === 'dispatched') return 'dispatched';
+    if (urlTab === 'matrix') return 'matrix';
+    return 'all';
+  };
+
+  const [activeTab, setActiveTab] = useState<'all' | 'offers' | 'emergency' | 'reserved' | 'prepared' | 'dispatched' | 'matrix'>(resolveInitialTab);
   const [searchQuery, setSearchQuery] = useState('');
   const [componentFilter, setComponentFilter] = useState('all');
   const [bloodGroupFilter, setBloodGroupFilter] = useState('all');
+
+  // Smart Routing Offer Response State
+  const [offerActionLoading, setOfferActionLoading] = useState(false);
+  const [showPartialModal, setShowPartialModal] = useState(false);
+  const [partialUnits, setPartialUnits] = useState<number>(1);
+  const [showDeclineModal, setShowDeclineModal] = useState(false);
+  const [declineReason, setDeclineReason] = useState<string>('');
 
   // Dispatch Preparation Form State
   const [showDispatchModal, setShowDispatchModal] = useState(false);
@@ -66,6 +87,40 @@ export const HospitalRequestsHub: React.FC = () => {
   const [matrixData, setMatrixData] = useState<any | null>(null);
   const [loadingMatrix, setLoadingMatrix] = useState(false);
 
+  const handleRespondOffer = async (action: 'Accept' | 'Decline' | 'Partial') => {
+    if (!selectedReq?.myOffer) return;
+    setOfferActionLoading(true);
+    setStatusMessage(null);
+    try {
+      const res = await bloodBankApi.respondToOffer(selectedReq.myOffer.id, {
+        action,
+        quantityUnits: action === 'Partial' ? partialUnits : selectedReq.myOffer.offeredUnits,
+        reason: action === 'Decline' ? (declineReason.trim() || 'Facility cannot fulfill at this time') : undefined
+      });
+      if (res.success) {
+        setStatusMessage({
+          type: 'success',
+          text: res.message || `Successfully responded (${action}) to routing offer.`
+        });
+        setShowPartialModal(false);
+        setShowDeclineModal(false);
+        await fetchRequests();
+      } else {
+        setStatusMessage({
+          type: 'error',
+          text: res.error || 'Failed to submit response to offer.'
+        });
+      }
+    } catch (err: any) {
+      setStatusMessage({
+        type: 'error',
+        text: err.message || 'Error communicating with routing engine.'
+      });
+    } finally {
+      setOfferActionLoading(false);
+    }
+  };
+
   const fetchRequests = async () => {
     setLoadingQueue(true);
     const res = await bloodBankApi.getRequests({
@@ -77,6 +132,31 @@ export const HospitalRequestsHub: React.FC = () => {
 
     if (res.success && res.requests) {
       setRequests(res.requests);
+
+      // Direct target requisition selection from notification deep-link
+      if (targetRequestId) {
+        const targetReq = res.requests.find((r: BloodRequest) => r.id === targetRequestId);
+        if (targetReq) {
+          setSelectedReq(targetReq);
+          setSelectedUnitIds(targetReq.assignedUnitIds || []);
+          setLoadingQueue(false);
+          return;
+        } else {
+          try {
+            const singleRes = await bloodBankApi.getRequestById(targetRequestId);
+            if (singleRes.success && singleRes.request) {
+              setRequests(prev => [singleRes.request, ...prev.filter(r => r.id !== targetRequestId)]);
+              setSelectedReq(singleRes.request);
+              setSelectedUnitIds(singleRes.request.assignedUnitIds || []);
+              setLoadingQueue(false);
+              return;
+            }
+          } catch {
+            // Fallback to standard selection
+          }
+        }
+      }
+
       if (selectedReq) {
         const refreshed = res.requests.find((r: BloodRequest) => r.id === selectedReq.id);
         if (refreshed) {
@@ -122,6 +202,19 @@ export const HospitalRequestsHub: React.FC = () => {
   useEffect(() => {
     fetchRequests();
   }, [activeTab, componentFilter, bloodGroupFilter]);
+
+  useEffect(() => {
+    if (urlTab) {
+      const resolved = resolveInitialTab();
+      setActiveTab(resolved);
+    }
+  }, [urlTab]);
+
+  useEffect(() => {
+    if (targetRequestId) {
+      fetchRequests();
+    }
+  }, [targetRequestId]);
 
   useEffect(() => {
     if (activeTab === 'matrix') {
@@ -284,6 +377,7 @@ export const HospitalRequestsHub: React.FC = () => {
 
   // Compute summary stats
   const totalCount = requests.length;
+  const pendingOffersCount = requests.filter(r => (r as any).myOffer?.status === 'Offered').length;
   const emergencyCount = requests.filter(r => r.urgency === 'Emergency').length;
   const reservedCount = requests.filter(r => r.status === 'Reserved' || r.status === 'Allocated').length;
   const inTransitCount = requests.filter(r => r.status === 'Dispatched' || r.status === 'Issued').length;
@@ -305,7 +399,7 @@ export const HospitalRequestsHub: React.FC = () => {
             Fulfillment, Barcode Assignment & Dispatch
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Cross-match released inventory, assign itemized blood units, generate packing manifests, and log courier handoffs.
+            Cross-match released inventory, respond to smart routing offers, assign itemized blood units, and dispatch cold-chain shipments.
           </p>
         </div>
 
@@ -333,7 +427,15 @@ export const HospitalRequestsHub: React.FC = () => {
       </div>
 
       {/* KPI Overview Tiles */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <div className="bg-white rounded-2xl border border-indigo-200 p-4 shadow-sm bg-indigo-50/20">
+          <span className="text-[10px] font-extrabold text-indigo-700 uppercase tracking-wider block flex items-center space-x-1">
+            <Sparkles className="w-3 h-3 text-indigo-600" />
+            <span>Routed Offers</span>
+          </span>
+          <span className="text-2xl font-black text-indigo-900 mt-1 block">{pendingOffersCount}</span>
+          <span className="text-[11px] text-indigo-600 mt-0.5 block">Pending your review</span>
+        </div>
         <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
           <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">Inbound Queue</span>
           <span className="text-2xl font-black text-slate-900 mt-1 block">{totalCount}</span>
@@ -352,7 +454,7 @@ export const HospitalRequestsHub: React.FC = () => {
           <span className="text-2xl font-black text-amber-700 mt-1 block">{reservedCount}</span>
           <span className="text-[11px] text-amber-600 mt-0.5 block">Staged for preparation</span>
         </div>
-        <div className="bg-white rounded-2xl border border-purple-200 p-4 shadow-sm bg-purple-50/20">
+        <div className="bg-white rounded-2xl border border-purple-200 p-4 shadow-sm bg-purple-50/20 col-span-2 sm:col-span-1">
           <span className="text-[10px] font-extrabold text-purple-700 uppercase tracking-wider block flex items-center space-x-1">
             <Truck className="w-3 h-3" />
             <span>In Cold Transit</span>
@@ -388,6 +490,20 @@ export const HospitalRequestsHub: React.FC = () => {
           }`}
         >
           All Requisitions ({requests.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('offers')}
+          className={`px-4 py-2 font-bold rounded-lg transition-colors cursor-pointer whitespace-nowrap flex items-center space-x-1.5 ${
+            activeTab === 'offers' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          <span>Incoming Offers</span>
+          {pendingOffersCount > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full bg-indigo-200 text-indigo-900 text-[10px] font-black">
+              {pendingOffersCount}
+            </span>
+          )}
         </button>
         <button
           onClick={() => setActiveTab('emergency')}
@@ -662,6 +778,138 @@ export const HospitalRequestsHub: React.FC = () => {
                   <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs leading-relaxed text-slate-700">
                     <strong className="text-slate-900">Clinical Indication:</strong> {selectedReq.notes || 'Routine surgical reservation.'}
                   </div>
+
+                  {/* Phase 2 & 3: Smart Routing Offer Response Banner */}
+                  {(selectedReq as any).myOffer && (
+                    <div className="space-y-3">
+                      {(selectedReq as any).myOffer.status === 'Offered' ? (
+                        <div className="bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-900 text-white rounded-2xl p-5 shadow-lg border border-indigo-500/40 space-y-4">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-indigo-700/60 pb-3">
+                            <div className="flex items-center space-x-2.5">
+                              <div className="w-8 h-8 rounded-lg bg-indigo-500/30 flex items-center justify-center border border-indigo-400/40 text-indigo-200">
+                                <Sparkles className="w-4 h-4 text-indigo-300" />
+                              </div>
+                              <div>
+                                <span className="text-[10px] font-black uppercase tracking-wider text-indigo-300 bg-indigo-950/80 px-2 py-0.5 rounded border border-indigo-400/30">
+                                  INCOMING SMART ROUTED OFFER
+                                </span>
+                                <h4 className="font-extrabold text-base text-white mt-0.5">
+                                  {(selectedReq as any).myOffer.offeredUnits} Unit(s) Requested From Your Stock
+                                </h4>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-[11px] text-indigo-200 flex items-center space-x-1 sm:justify-end font-semibold">
+                                <Clock className="w-3.5 h-3.5 text-amber-400" />
+                                <span>Response Deadline: {new Date((selectedReq as any).myOffer.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                              </span>
+                              <span className="text-[10px] text-indigo-300 font-mono mt-0.5 block">
+                                Distance: {(selectedReq as any).myOffer.distanceKm} km from {selectedReq.hospitalName}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                            <div className="bg-white/10 p-2.5 rounded-xl border border-white/10">
+                              <span className="text-indigo-200 text-[10px] block">Hospital Requested</span>
+                              <strong className="text-white font-mono text-sm">{selectedReq.quantityUnits} Units</strong>
+                            </div>
+                            <div className="bg-white/10 p-2.5 rounded-xl border border-white/10">
+                              <span className="text-indigo-200 text-[10px] block">Offered Allocation</span>
+                              <strong className="text-emerald-300 font-mono text-sm">{(selectedReq as any).myOffer.offeredUnits} Units</strong>
+                            </div>
+                            <div className="bg-white/10 p-2.5 rounded-xl border border-white/10 col-span-2 sm:col-span-1">
+                              <span className="text-indigo-200 text-[10px] block">Your Verified Stock</span>
+                              <strong className="text-white font-mono text-sm">{eligibleUnits.length} Released Units</strong>
+                            </div>
+                          </div>
+
+                          {/* Response Actions */}
+                          <div className="flex flex-wrap items-center gap-2 pt-1">
+                            <button
+                              type="button"
+                              disabled={offerActionLoading || eligibleUnits.length < (selectedReq as any).myOffer.offeredUnits}
+                              onClick={() => handleRespondOffer('Accept')}
+                              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md transition flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Accept Full Offer ({(selectedReq as any).myOffer.offeredUnits} Units)</span>
+                            </button>
+
+                            {(selectedReq as any).myOffer.offeredUnits > 1 && (
+                              <button
+                                type="button"
+                                disabled={offerActionLoading}
+                                onClick={() => {
+                                  setPartialUnits(1);
+                                  setShowPartialModal(true);
+                                }}
+                                className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                              >
+                                Offer Partial Quantity
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              disabled={offerActionLoading}
+                              onClick={() => {
+                                setDeclineReason('');
+                                setShowDeclineModal(true);
+                              }}
+                              className="px-3.5 py-2 bg-white/10 hover:bg-rose-900/60 text-white/90 hover:text-white rounded-xl text-xs font-medium border border-white/20 transition cursor-pointer sm:ml-auto"
+                            >
+                              Decline Offer
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between text-xs">
+                          <div className="flex items-center space-x-2">
+                            <span className="font-extrabold text-slate-800">Your Facility Routing Status:</span>
+                            <StatusBadge status={(selectedReq as any).myOffer.status} />
+                            {(selectedReq as any).myOffer.acceptedUnits && (
+                              <span className="font-mono text-emerald-700 font-bold">({(selectedReq as any).myOffer.acceptedUnits} units committed)</span>
+                            )}
+                          </div>
+                          <span className="text-slate-400 text-[11px]">
+                            Responded: {new Date((selectedReq as any).myOffer.respondedAt || (selectedReq as any).myOffer.createdAt).toLocaleTimeString()}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Multi-Facility Routing Ledger */}
+                  {selectedReq.routedBankOffers && selectedReq.routedBankOffers.length > 0 && (
+                    <div className="bg-slate-50/80 rounded-xl border border-slate-200 p-3.5 space-y-2 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="font-extrabold text-slate-800 flex items-center space-x-1.5">
+                          <Layers className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>Smart Routing Candidate Ledger ({selectedReq.routedBankOffers.length} Invited Facilities)</span>
+                        </span>
+                        <span className="text-[11px] text-slate-500">
+                          Radius: {selectedReq.routingSearchRadiusKm || 25} km
+                        </span>
+                      </div>
+                      <div className="divide-y divide-slate-200/60">
+                        {selectedReq.routedBankOffers.map((o) => (
+                          <div key={o.id} className="py-2 flex items-center justify-between text-slate-700">
+                            <div>
+                              <span className="font-bold text-slate-900 block">{o.bloodBankName}</span>
+                              <span className="text-[10px] text-slate-400 block">{o.distanceKm} km away • Offered: {o.offeredUnits} u {o.acceptedUnits ? `• Committed: ${o.acceptedUnits} u` : ''}</span>
+                            </div>
+                            <div className="text-right">
+                              <StatusBadge status={o.status} />
+                              {o.declineReason && (
+                                <span className="text-[10px] text-rose-600 block mt-0.5">{o.declineReason}</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Quantity & Allocation Progress */}
                   <div className="p-3.5 bg-slate-50/70 rounded-xl border border-slate-200 space-y-2">
@@ -1240,6 +1488,159 @@ export const HospitalRequestsHub: React.FC = () => {
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* Partial Fulfillment Modal */}
+      {showPartialModal && selectedReq && (selectedReq as any).myOffer && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center space-x-2">
+                <Sparkles className="w-5 h-5 text-indigo-600" />
+                <h3 className="font-extrabold text-base text-slate-900">Offer Partial Stock Commitment</h3>
+              </div>
+              <button 
+                onClick={() => setShowPartialModal(false)}
+                className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="bg-indigo-50/60 rounded-xl p-3 border border-indigo-100 text-xs space-y-1.5">
+              <div className="flex justify-between text-slate-600">
+                <span>Requisition:</span>
+                <span className="font-mono font-bold text-slate-900">{selectedReq.id}</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Hospital Requester:</span>
+                <span className="font-bold text-slate-800">{selectedReq.hospitalName}</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Required Component:</span>
+                <span className="font-bold text-blood-700">{selectedReq.bloodGroup} {selectedReq.component}</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Max Units Requested:</span>
+                <span className="font-bold text-slate-900">{(selectedReq as any).myOffer.offeredUnits} Units</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Verified Stock In Your Bank:</span>
+                <span className="font-bold text-emerald-700">{eligibleUnits.length} Units Available</span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700">
+                Units You Can Commit Now:
+              </label>
+              <div className="flex items-center space-x-3">
+                <input
+                  type="number"
+                  min={1}
+                  max={Math.min(eligibleUnits.length, (selectedReq as any).myOffer.offeredUnits)}
+                  value={partialUnits}
+                  onChange={(e) => setPartialUnits(Math.max(1, Math.min(Number(e.target.value) || 1, Math.min(eligibleUnits.length, (selectedReq as any).myOffer.offeredUnits))))}
+                  className="w-24 px-3 py-2 border border-slate-300 rounded-xl text-center font-mono font-bold text-lg text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+                <span className="text-xs text-slate-500">
+                  of {(selectedReq as any).myOffer.offeredUnits} requested
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                By committing <strong>{partialUnits} unit(s)</strong>, LifeLink will immediately reserve your stock and automatically route the remaining <strong>{Math.max(0, (selectedReq as any).myOffer.offeredUnits - partialUnits)} unit(s)</strong> to nearby partner facilities.
+              </p>
+            </div>
+
+            <div className="flex justify-end space-x-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowPartialModal(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={offerActionLoading || partialUnits < 1 || partialUnits > eligibleUnits.length}
+                onClick={() => handleRespondOffer('Partial')}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-md transition cursor-pointer"
+              >
+                {offerActionLoading ? 'Committing...' : `Commit ${partialUnits} Unit(s)`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Decline Offer Modal */}
+      {showDeclineModal && selectedReq && (selectedReq as any).myOffer && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center space-x-2">
+                <AlertTriangle className="w-5 h-5 text-rose-600" />
+                <h3 className="font-extrabold text-base text-slate-900">Decline Routing Offer</h3>
+              </div>
+              <button 
+                onClick={() => setShowDeclineModal(false)}
+                className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 space-y-1">
+              <strong className="block font-bold">Automatic Escalation Warning</strong>
+              <p className="text-[11px] text-rose-700 leading-relaxed">
+                Declining this offer for <strong>{selectedReq.hospitalName}</strong> will immediately cause LifeLink's Smart Routing Engine to expand search radius and dispatch emergency offers to the next ranked blood banks.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700">
+                Reason for Declining (Optional):
+              </label>
+              <select
+                value={declineReason}
+                onChange={(e) => setDeclineReason(e.target.value)}
+                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-rose-500 focus:outline-none bg-white text-slate-800 mb-2"
+              >
+                <option value="">Select a reason or write below...</option>
+                <option value="Insufficient clinically released stock">Insufficient clinically released stock</option>
+                <option value="Active local trauma / surgery reservation in progress">Active local trauma / surgery reservation in progress</option>
+                <option value="Laboratory screening equipment calibration">Laboratory screening equipment calibration</option>
+                <option value="Staffing or logistics transport limitation">Staffing or logistics transport limitation</option>
+                <option value="Cold-chain container storage unavailable">Cold-chain container storage unavailable</option>
+              </select>
+              <textarea
+                value={declineReason}
+                onChange={(e) => setDeclineReason(e.target.value)}
+                placeholder="Or specify custom operational reason..."
+                rows={2}
+                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-rose-500 focus:outline-none resize-none"
+              />
+            </div>
+
+            <div className="flex justify-end space-x-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowDeclineModal(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={offerActionLoading}
+                onClick={() => handleRespondOffer('Decline')}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-md transition cursor-pointer"
+              >
+                {offerActionLoading ? 'Declining...' : 'Confirm Decline & Re-route'}
+              </button>
+            </div>
           </div>
         </div>
       )}

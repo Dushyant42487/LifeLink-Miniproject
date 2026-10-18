@@ -15,7 +15,10 @@ export interface AuthenticatedRequest extends Request {
 
 export const optionalAuthenticateToken = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
+  let token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
+  if (!token && typeof req.query?.token === 'string') {
+    token = req.query.token;
+  }
 
   if (token) {
     try {
@@ -30,7 +33,10 @@ export const optionalAuthenticateToken = (req: AuthenticatedRequest, res: Respon
 
 export const authenticateToken = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
+  let token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
+  if (!token && typeof req.query?.token === 'string') {
+    token = req.query.token;
+  }
 
   if (!token) {
     return res.status(401).json({ success: false, error: 'Access token required' });

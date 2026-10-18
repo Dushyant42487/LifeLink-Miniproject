@@ -253,7 +253,7 @@ def build_pdf(output_path):
     story.append(Paragraph("• <b>Step 2 (Verify Ineligible State):</b> Log into Donor Dashboard (<code>/donor/dashboard</code>). Observe amber warning banner: <i>'Verification Required: Please upload your blood group report or government ID'</i>. Digital pass barcode is locked.", bullet_style))
     story.append(Paragraph("• <b>Step 3 (Document Upload):</b> Go to <code>/donor/profile</code>. Enter Document: <i>Lab Blood Report</i>, ID: <code>LAB-9942</code>, URL: <code>https://cdn.lifelink.io/reports/rivera.pdf</code>. Click Submit. Badge transitions to <i>'Pending Verification'</i>.", bullet_style))
     story.append(Paragraph("• <b>Step 4 (Staff Approval):</b> In another tab, log into Blood Bank Portal as <code>admin@redcrossblood.org</code>. In donor lookup, find <code>Rivera</code>. Observe badge <i>'Pending Verification'</i>. Click <b>[Verify Donor]</b>.", bullet_style))
-    story.append(Paragraph("• <b>Step 5 (Confirmation):</b> Refresh Donor Portal. Amber alert is replaced with green badge: <i>'Verified Donor — You are eligible to donate blood!'</i> Digital pass is now unlocked with a verified QR code.", bullet_style))
+    story.append(Paragraph("• <b>Step 5 (Confirmation):</b> Refresh Donor Portal.cj Amber alert is replaced with green badge: <i>'Verified Donor — You are eligible to donate blood!'</i> Digital pass is now unlocked with a verified QR code.", bullet_style))
     story.append(Spacer(1, 8))
 
     # Scenario 2

@@ -26,6 +26,9 @@ import {
 
 import { safeSupabaseSync, persistRecordDirect } from '../models/db';
 import { syncDonorAuthoritativeEligibility } from '../services/donorEligibilityService';
+import { notificationService } from '../services/notificationService';
+import { smartRoutingService } from '../services/smartRoutingService';
+import { isValidCoordinate, parseCoordinates, calcHaversineKm } from '../utils/geo';
 
 /**
  * Calculates days remaining from today until expiry date
@@ -995,7 +998,176 @@ export const getDonorDetails = async (req: AuthenticatedRequest, res: Response) 
 };
 
 /**
- * Authorize or Reject Donor Blood Group & Identity Verification (Authorized Blood Bank Staff Only)
+ * Dedicated Donor Verification Queue for Authorized Blood Bank Staff
+ * Returns pending and clarification-requested verification submissions assigned to this blood bank.
+ */
+export const getDonorVerificationQueue = async (req: AuthenticatedRequest, res: Response) => {
+  await safeSupabaseSync();
+
+  const bb = resolveBloodBank(req);
+  const bankId = bb?.id || req.user?.id;
+  if (!bankId) {
+    return res.status(401).json({ success: false, error: 'Unauthorized blood bank facility' });
+  }
+
+  // Find donors assigned to this blood bank or unassigned donors in the regional area
+  const pendingDonors = db.donors
+    .filter(d => {
+      const status = d.verificationStatus || d.bloodGroupVerificationStatus || 'Unverified';
+      const isPendingStatus = status === 'Pending Verification' || status === 'Needs More Info';
+
+      if (!isPendingStatus) return false;
+
+      // Ownership filter: assigned to this bank, or unassigned/legacy record routed here
+      if (d.assignedBloodBankId) {
+        return d.assignedBloodBankId === bankId;
+      }
+      if (d.preferredBloodBankId) {
+        return d.preferredBloodBankId === bankId;
+      }
+      // If donor has no explicit assignment, check city or route default
+      if (bb?.city && d.city && d.city.toLowerCase() === bb.city.toLowerCase()) {
+        return true;
+      }
+      // If only one blood bank or default bank (bb-1)
+      return bankId === 'bb-1' || db.bloodBanks.length <= 1;
+    })
+    .map(d => {
+      const eligibility = syncDonorAuthoritativeEligibility(d);
+      return {
+        id: d.id,
+        donorCode: `DON-${d.id.replace('donor-', '')}`,
+        name: d.name,
+        email: d.email,
+        phone: d.phone,
+        city: d.city,
+        state: d.state,
+        bloodGroup: d.bloodGroup,
+        weightKg: d.weightKg,
+        dob: d.dob,
+        gender: d.gender,
+        verificationStatus: d.verificationStatus || d.bloodGroupVerificationStatus || 'Pending Verification',
+        bloodGroupVerificationStatus: d.bloodGroupVerificationStatus || d.verificationStatus || 'Pending Verification',
+        assignedBloodBankId: d.assignedBloodBankId || bankId,
+        assignedBloodBankName: d.assignedBloodBankName || bb?.bloodBankName || bb?.name || 'Blood Bank',
+        verificationSubmittedAt: d.verificationSubmittedAt || d.createdAt,
+        proofDocumentType: (d as any).proofDocumentType || 'Lab Blood Report',
+        proofDocumentNumber: (d as any).proofDocumentNumber,
+        bloodGroupProofDocUrl: d.bloodGroupProofDocUrl,
+        proofDocument: (d as any).proofDocument,
+        verificationNotes: d.verificationNotes,
+        rejectionReason: d.rejectionReason,
+        isEligible: eligibility.isEligible
+      };
+    });
+
+  // Sort oldest pending submission first
+  pendingDonors.sort((a, b) => new Date(a.verificationSubmittedAt).getTime() - new Date(b.verificationSubmittedAt).getTime());
+
+  res.json({
+    success: true,
+    count: pendingDonors.length,
+    queue: pendingDonors
+  });
+};
+
+/**
+ * Eligible Blood Bank Directory for Donor Verification Assignment
+ * Returns genuine, active, verified blood bank organizations eligible to receive verification requests.
+ * Uses Haversine formula to compute distance from donor coordinates and sorts nearest first.
+ */
+export const getEligibleBloodBankDirectory = async (req: AuthenticatedRequest, res: Response) => {
+  await safeSupabaseSync();
+
+  const { lat, lng, radius, q } = req.query;
+
+  // Filter genuine, active, verified blood banks
+  let eligibleBanks = db.bloodBanks.filter(b => {
+    if (!b.id || (!b.name && !b.bloodBankName)) return false;
+    if (b.isActive === false) return false;
+    return true;
+  });
+
+  if (q) {
+    const term = String(q).trim().toLowerCase();
+    eligibleBanks = eligibleBanks.filter(b => 
+      (b.name && b.name.toLowerCase().includes(term)) ||
+      (b.bloodBankName && b.bloodBankName.toLowerCase().includes(term)) ||
+      (b.city && b.city.toLowerCase().includes(term)) ||
+      (b.address && b.address.toLowerCase().includes(term))
+    );
+  }
+
+  let donorLat: number | undefined;
+  let donorLng: number | undefined;
+
+  if (lat !== undefined && lng !== undefined && lat !== '' && lng !== '') {
+    const parsed = parseCoordinates(lat, lng);
+    if (!parsed.error && isValidCoordinate(parsed.lat, parsed.lng)) {
+      donorLat = parsed.lat;
+      donorLng = parsed.lng;
+    }
+  }
+
+  // Calculate distance if coordinates are present
+  let formatted = eligibleBanks.map(b => {
+    let distanceKm: number | null = null;
+    if (donorLat !== undefined && donorLng !== undefined && isValidCoordinate(b.latitude, b.longitude)) {
+      distanceKm = calcHaversineKm(donorLat, donorLng, b.latitude!, b.longitude!);
+    }
+
+    return {
+      id: b.id,
+      name: b.name || b.bloodBankName,
+      bloodBankName: b.bloodBankName || b.name,
+      registrationId: b.registrationId,
+      address: b.address,
+      city: b.city,
+      state: b.state,
+      phone: b.phone,
+      emergencyPhone: b.emergencyPhone,
+      latitude: b.latitude,
+      longitude: b.longitude,
+      distanceKm,
+      isAuthorizedForVerification: true,
+      serviceArea: b.serviceArea || (b.city ? `${b.city} & Regional Area` : 'Regional Area')
+    };
+  });
+
+  let maxRadiusKm: number | null = null;
+  if (radius && radius !== 'all') {
+    const num = Number(radius);
+    if (Number.isFinite(num) && num > 0) {
+      maxRadiusKm = num;
+      if (donorLat !== undefined && donorLng !== undefined) {
+        formatted = formatted.filter(b => b.distanceKm !== null && b.distanceKm <= num);
+      }
+    }
+  }
+
+  // Nearest first when distance is available, otherwise alphabetical
+  if (donorLat !== undefined && donorLng !== undefined) {
+    formatted.sort((a, b) => {
+      if (a.distanceKm === null) return 1;
+      if (b.distanceKm === null) return -1;
+      return a.distanceKm - b.distanceKm;
+    });
+  } else {
+    formatted.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  res.json({
+    success: true,
+    totalFound: formatted.length,
+    radiusKm: maxRadiusKm,
+    originProvided: donorLat !== undefined && donorLng !== undefined,
+    origin: donorLat !== undefined && donorLng !== undefined ? { lat: donorLat, lng: donorLng } : null,
+    bloodBanks: formatted
+  });
+};
+
+/**
+ * Authorize, Reject or Request Additional Information for Donor Blood Group & Identity Verification (Authorized Blood Bank Staff Only)
  */
 export const verifyDonorEligibility = async (req: AuthenticatedRequest, res: Response) => {
   await safeSupabaseSync();
@@ -1017,12 +1189,20 @@ export const verifyDonorEligibility = async (req: AuthenticatedRequest, res: Res
     return res.status(404).json({ success: false, error: `Donor ${id} not found.` });
   }
 
+  // Tenant authorization: Unrelated blood bank cannot review if explicitly assigned to another bank
+  if (donor.assignedBloodBankId && donor.assignedBloodBankId !== bankId && req.user?.role !== 'admin') {
+    return res.status(403).json({
+      success: false,
+      error: `Access denied. Donor ${donor.name} is assigned to ${donor.assignedBloodBankName || donor.assignedBloodBankId} for verification.`
+    });
+  }
+
   const { status, bloodGroup, rejectionReason, notes } = req.body;
 
-  if (!status || !['Verified', 'Rejected'].includes(status)) {
+  if (!status || !['Verified', 'Rejected', 'Needs More Info'].includes(status)) {
     return res.status(400).json({
       success: false,
-      error: "Verification status must be either 'Verified' or 'Rejected'."
+      error: "Verification status must be 'Verified', 'Rejected', or 'Needs More Info'."
     });
   }
 
@@ -1034,7 +1214,9 @@ export const verifyDonorEligibility = async (req: AuthenticatedRequest, res: Res
     donor.verifiedBy = bankId;
     donor.verifiedByName = bankName;
     donor.verifiedAt = new Date().toISOString();
+    donor.verificationDecisionAt = donor.verifiedAt;
     donor.rejectionReason = undefined;
+    donor.verificationNotes = notes;
 
     if (bloodGroup && ['O-', 'O+', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'].includes(bloodGroup)) {
       donor.bloodGroup = bloodGroup as BloodGroup;
@@ -1042,16 +1224,13 @@ export const verifyDonorEligibility = async (req: AuthenticatedRequest, res: Res
 
     const assessment = syncDonorAuthoritativeEligibility(donor);
 
-    // Notify donor
-    db.notifications.unshift({
-      id: `NOTIF-${Date.now()}`,
+    // Notify donor via real-time SSE & persistent notification
+    await notificationService.dispatchNotification({
       userId: donor.id,
       title: 'Donor Verification Approved',
       message: `Your blood group (${donor.bloodGroup}) verification has been reviewed and approved by ${bankName}. You are now cleared to donate!`,
-      type: 'eligibility',
+      type: 'verification',
       priority: 'high',
-      read: false,
-      createdAt: new Date().toISOString(),
       link: '/donor/dashboard'
     });
 
@@ -1060,6 +1239,7 @@ export const verifyDonorEligibility = async (req: AuthenticatedRequest, res: Res
 
     return res.json({
       success: true,
+      verificationStatus: 'Verified',
       message: `Donor ${donor.name} successfully verified by ${bankName}.`,
       donor: {
         id: donor.id,
@@ -1074,27 +1254,24 @@ export const verifyDonorEligibility = async (req: AuthenticatedRequest, res: Res
       },
       eligibility: assessment
     });
-  } else {
-    // Rejected
-    donor.bloodGroupVerificationStatus = 'Rejected';
-    donor.verificationStatus = 'Rejected';
+  } else if (status === 'Needs More Info') {
+    donor.bloodGroupVerificationStatus = 'Needs More Info';
+    donor.verificationStatus = 'Needs More Info';
     donor.verifiedBy = bankId;
     donor.verifiedByName = bankName;
-    donor.verifiedAt = new Date().toISOString();
-    donor.rejectionReason = rejectionReason || notes || 'Submitted documentation was insufficient or illegible.';
+    donor.verificationDecisionAt = new Date().toISOString();
+    donor.verificationNotes = notes || rejectionReason || 'Please provide clearer documentation or additional identification.';
+    donor.rejectionReason = undefined;
 
     const assessment = syncDonorAuthoritativeEligibility(donor);
 
-    // Notify donor
-    db.notifications.unshift({
-      id: `NOTIF-${Date.now()}`,
+    // Notify donor via real-time SSE & persistent notification
+    await notificationService.dispatchNotification({
       userId: donor.id,
-      title: 'Verification Incomplete / Document Rejected',
-      message: `Your blood group verification document was rejected by ${bankName}. Reason: ${donor.rejectionReason}`,
-      type: 'eligibility',
+      title: 'Additional Information Requested',
+      message: `${bankName} has requested additional details to verify your donor profile: ${donor.verificationNotes}`,
+      type: 'verification',
       priority: 'high',
-      read: false,
-      createdAt: new Date().toISOString(),
       link: '/donor/profile'
     });
 
@@ -1103,6 +1280,51 @@ export const verifyDonorEligibility = async (req: AuthenticatedRequest, res: Res
 
     return res.json({
       success: true,
+      verificationStatus: 'Needs More Info',
+      message: `Requested additional information from donor ${donor.name}.`,
+      donor: {
+        id: donor.id,
+        name: donor.name,
+        bloodGroup: donor.bloodGroup,
+        verificationStatus: donor.verificationStatus,
+        bloodGroupVerificationStatus: donor.bloodGroupVerificationStatus,
+        isEligible: donor.isEligible,
+        deferralReason: donor.deferralReason,
+        verificationNotes: donor.verificationNotes,
+        verificationDecisionAt: donor.verificationDecisionAt,
+        verifiedByName: donor.verifiedByName
+      },
+      eligibility: assessment
+    });
+  } else {
+    // Rejected
+    donor.bloodGroupVerificationStatus = 'Rejected';
+    donor.verificationStatus = 'Rejected';
+    donor.verifiedBy = bankId;
+    donor.verifiedByName = bankName;
+    donor.verifiedAt = new Date().toISOString();
+    donor.verificationDecisionAt = donor.verifiedAt;
+    donor.rejectionReason = rejectionReason || notes || 'Submitted documentation was insufficient or illegible.';
+    donor.verificationNotes = undefined;
+
+    const assessment = syncDonorAuthoritativeEligibility(donor);
+
+    // Notify donor via real-time SSE & persistent notification
+    await notificationService.dispatchNotification({
+      userId: donor.id,
+      title: 'Verification Incomplete / Document Rejected',
+      message: `Your blood group verification document was rejected by ${bankName}. Reason: ${donor.rejectionReason}`,
+      type: 'verification',
+      priority: 'high',
+      link: '/donor/profile'
+    });
+
+    db.saveSnapshot();
+    await persistRecordDirect('donors', donor);
+
+    return res.json({
+      success: true,
+      verificationStatus: 'Rejected',
       message: `Donor verification marked as Rejected: ${donor.rejectionReason}`,
       donor: {
         id: donor.id,
@@ -2159,11 +2381,15 @@ export const getBloodBankRequests = async (req: AuthenticatedRequest, res: Respo
 
   const { status, urgency, hospitalId, component, bloodGroup, tab, search } = req.query;
 
-  // Filter requests strictly assigned to this blood bank (multi-tenant isolation)
-  let requests = db.bloodRequests.filter(r => r.bloodBankId === bankId);
+  // Filter requests strictly assigned to this blood bank or routed to this blood bank via an offer (multi-tenant isolation)
+  let requests = db.bloodRequests.filter(r => 
+    r.bloodBankId === bankId || (r.routedBankOffers || []).some(o => o.bloodBankId === bankId)
+  );
 
   // Tab filtering
-  if (tab === 'active') {
+  if (tab === 'offers' || tab === 'routed' || tab === 'incoming') {
+    requests = requests.filter(r => (r.routedBankOffers || []).some(o => o.bloodBankId === bankId && o.status === 'Offered'));
+  } else if (tab === 'active') {
     requests = requests.filter(r => r.status !== 'Fulfilled' && r.status !== 'Cancelled' && r.status !== 'Rejected');
   } else if (tab === 'emergency') {
     requests = requests.filter(r => r.urgency === 'Emergency' && r.status !== 'Fulfilled' && r.status !== 'Cancelled');
@@ -2219,11 +2445,13 @@ export const getBloodBankRequests = async (req: AuthenticatedRequest, res: Respo
     const remainingNeeded = Math.max(0, r.quantityUnits - (r.fulfilledUnits || 0));
     const allocatedUnitsCount = r.assignedUnitIds?.length || 0;
     const linkedDispatch = db.bloodDispatches.find(d => d.requestId === r.id);
+    const myOffer = (r.routedBankOffers || []).find(o => o.bloodBankId === bankId);
     return {
       ...r,
       remainingNeeded,
       allocatedUnitsCount,
-      linkedDispatch: linkedDispatch || null
+      linkedDispatch: linkedDispatch || null,
+      myOffer: myOffer || null
     };
   });
 
@@ -2232,6 +2460,179 @@ export const getBloodBankRequests = async (req: AuthenticatedRequest, res: Respo
     count: enriched.length,
     requests: enriched
   });
+};
+
+/**
+ * Get dedicated routed requests / offers queue for authenticated blood bank
+ */
+export const getBloodBankOffers = async (req: AuthenticatedRequest, res: Response) => {
+  await safeSupabaseSync();
+
+  const bb = resolveBloodBank(req);
+  const bankId = bb?.id || req.user?.id;
+
+  if (!bankId) {
+    return res.status(401).json({ success: false, error: 'Unauthorized blood center' });
+  }
+
+  const { status, urgency } = req.query;
+
+  // Find all requests with offers addressed to this bank
+  const matchingOffers: any[] = [];
+  const nowMs = Date.now();
+
+  for (const r of db.bloodRequests) {
+    const offer = (r.routedBankOffers || []).find(o => o.bloodBankId === bankId);
+    if (!offer) continue;
+
+    if (status && typeof status === 'string' && status !== 'all') {
+      if (offer.status.toLowerCase() !== status.toLowerCase()) continue;
+    }
+
+    if (urgency && typeof urgency === 'string' && urgency !== 'all') {
+      if (r.urgency.toLowerCase() !== urgency.toLowerCase()) continue;
+    }
+
+    // Auto-mark expired if past deadline and still 'Offered'
+    if (offer.status === 'Offered' && new Date(offer.expiresAt).getTime() < nowMs) {
+      offer.status = 'Expired';
+      offer.respondedAt = new Date().toISOString();
+    }
+
+    // Live eligible units owned by this bank
+    const eligibleUnits = smartRoutingService.getEligibleStockForBank(bankId, r.bloodGroup, r.component, r.id);
+
+    const msRemaining = Math.max(0, new Date(offer.expiresAt).getTime() - nowMs);
+    const minutesRemaining = Math.ceil(msRemaining / (1000 * 60));
+
+    matchingOffers.push({
+      offerId: offer.id,
+      requestId: r.id,
+      status: offer.status,
+      urgency: r.urgency,
+      hospitalId: r.hospitalId,
+      hospitalName: r.hospitalName,
+      bloodGroup: r.bloodGroup,
+      component: r.component,
+      quantityRequested: r.quantityUnits,
+      fulfilledUnits: r.fulfilledUnits || 0,
+      remainingUnitsNeeded: r.remainingUnitsToFulfill ?? Math.max(0, r.quantityUnits - (r.fulfilledUnits || 0)),
+      offeredUnits: offer.offeredUnits,
+      acceptedUnits: offer.acceptedUnits,
+      distanceKm: offer.distanceKm,
+      availableStockCount: eligibleUnits.length,
+      eligibleUnits: eligibleUnits.map(u => ({
+        id: u.id,
+        bloodGroup: u.bloodGroup,
+        component: u.component,
+        expiryDate: u.expiryDate,
+        storageLocation: u.storageLocation,
+        testingStatus: u.testingStatus,
+        availability: u.availability
+      })),
+      expiresAt: offer.expiresAt,
+      minutesRemaining,
+      respondedAt: offer.respondedAt,
+      declineReason: offer.declineReason,
+      notes: offer.notes,
+      createdAt: offer.createdAt,
+      requiredByDate: r.requiredByDate,
+      department: r.department
+    });
+  }
+
+  // Sort: Offered first, then by urgency (Emergency > Urgent > Routine), then closest expiry
+  const urgencyWeight: Record<string, number> = { Emergency: 3, Urgent: 2, Routine: 1 };
+  matchingOffers.sort((a, b) => {
+    if (a.status === 'Offered' && b.status !== 'Offered') return -1;
+    if (a.status !== 'Offered' && b.status === 'Offered') return 1;
+
+    const wDiff = (urgencyWeight[b.urgency] || 0) - (urgencyWeight[a.urgency] || 0);
+    if (wDiff !== 0) return wDiff;
+
+    return new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime();
+  });
+
+  res.json({
+    success: true,
+    count: matchingOffers.length,
+    offers: matchingOffers
+  });
+};
+
+/**
+ * Blood Bank responds to an offer: Accept, Decline, or Partial
+ */
+export const respondToBloodBankOffer = async (req: AuthenticatedRequest, res: Response) => {
+  await safeSupabaseSync();
+
+  const bb = resolveBloodBank(req);
+  const bankId = bb?.id || req.user?.id;
+
+  if (!bankId) {
+    return res.status(401).json({ success: false, error: 'Unauthorized blood center' });
+  }
+
+  const { id } = req.params; // offerId or requestId
+  const { action, quantityUnits, reason, notes } = req.body;
+
+  if (!action || !['Accept', 'Decline', 'Partial'].includes(action)) {
+    return res.status(400).json({
+      success: false,
+      error: "Invalid action. Must be 'Accept', 'Decline', or 'Partial'."
+    });
+  }
+
+  // Locate the requisition and offer
+  let targetRequest: any = null;
+  let targetOffer: any = null;
+
+  for (const r of db.bloodRequests) {
+    const found = (r.routedBankOffers || []).find(o => o.id === id || (r.id === id && o.bloodBankId === bankId));
+    if (found) {
+      targetRequest = r;
+      targetOffer = found;
+      break;
+    }
+  }
+
+  if (!targetRequest || !targetOffer) {
+    return res.status(404).json({ success: false, error: `Routing offer ${id} not found.` });
+  }
+
+  // Tenant Isolation: Only the target blood bank may respond
+  if (targetOffer.bloodBankId !== bankId) {
+    return res.status(403).json({ success: false, error: 'Access denied: Unauthorized facility. This routing offer belongs to another blood center.' });
+  }
+
+  try {
+    const actorName = req.user?.name || bb?.bloodBankName || 'Blood Bank Staff';
+    const result = await smartRoutingService.handleOfferResponse(
+      targetRequest.id,
+      targetOffer.id,
+      bankId,
+      action as 'Accept' | 'Decline' | 'Partial',
+      quantityUnits,
+      reason,
+      actorName
+    );
+
+    res.json({
+      success: true,
+      message: result.message,
+      committedUnits: result.committedUnits,
+      remainingUnits: result.remainingUnits,
+      remainingNeeded: result.remainingUnits,
+      offer: result.offer,
+      request: result.request
+    });
+  } catch (err: any) {
+    const status = err.message.includes('expired') || err.message.includes('already') || err.message.includes('fulfilled') ? 409 : 400;
+    return res.status(status).json({
+      success: false,
+      error: err.message
+    });
+  }
 };
 
 /**
@@ -2250,7 +2651,10 @@ export const getBloodBankRequestById = async (req: AuthenticatedRequest, res: Re
     return res.status(404).json({ success: false, error: 'Requisition not found' });
   }
 
-  if (request.bloodBankId !== bankId) {
+  const isAssigned = request.bloodBankId === bankId;
+  const hasOffer = (request.routedBankOffers || []).some(o => o.bloodBankId === bankId);
+
+  if (!isAssigned && !hasOffer) {
     return res.status(403).json({ success: false, error: 'Access denied: Requisition belongs to another blood center' });
   }
 
@@ -2260,6 +2664,7 @@ export const getBloodBankRequestById = async (req: AuthenticatedRequest, res: Re
 
   const linkedDispatch = db.bloodDispatches.find(d => d.requestId === request.id) || null;
   const remainingNeeded = Math.max(0, request.quantityUnits - (request.fulfilledUnits || 0));
+  const myOffer = (request.routedBankOffers || []).find(o => o.bloodBankId === bankId) || null;
 
   res.json({
     success: true,
@@ -2267,7 +2672,8 @@ export const getBloodBankRequestById = async (req: AuthenticatedRequest, res: Re
       ...request,
       remainingNeeded,
       allocatedUnitsCount: assignedUnits.length,
-      linkedDispatch
+      linkedDispatch,
+      myOffer
     },
     assignedUnits,
     dispatch: linkedDispatch
@@ -2290,7 +2696,10 @@ export const getEligibleUnitsForRequest = async (req: AuthenticatedRequest, res:
     return res.status(404).json({ success: false, error: 'Requisition not found' });
   }
 
-  if (request.bloodBankId !== bankId) {
+  const isAssigned = request.bloodBankId === bankId;
+  const hasOffer = (request.routedBankOffers || []).some(o => o.bloodBankId === bankId);
+
+  if (!isAssigned && !hasOffer) {
     return res.status(403).json({ success: false, error: 'Access denied: Requisition belongs to another blood center' });
   }
 
@@ -2426,11 +2835,16 @@ export const allocateUnitsToRequest = async (req: AuthenticatedRequest, res: Res
     });
   }
 
-  const remainingNeeded = Math.max(0, request.quantityUnits - (request.fulfilledUnits || 0));
-  if (unitIds.length > remainingNeeded) {
+  const unitsAllocatedByOtherBanks = (request.assignedUnitIds || []).filter(id => {
+    if (unitIds.includes(id)) return false;
+    const u = db.bloodUnits.find(unit => unit.id === id);
+    return u && u.bloodBankId !== bankId;
+  }).length;
+  const availableToAllocate = Math.max(0, request.quantityUnits - unitsAllocatedByOtherBanks);
+  if (unitIds.length > availableToAllocate) {
     return res.status(400).json({
       success: false,
-      error: `Allocation quantity (${unitIds.length}) exceeds remaining required quantity (${remainingNeeded} unit(s)).`
+      error: `Allocation quantity (${unitIds.length}) exceeds remaining available capacity (${availableToAllocate} unit(s)).`
     });
   }
 
@@ -2505,6 +2919,17 @@ export const allocateUnitsToRequest = async (req: AuthenticatedRequest, res: Res
     }
   }
 
+  // Release any previously assigned units by this bank that were replaced
+  (request.assignedUnitIds || []).forEach(prevId => {
+    if (!uniqueUnitIds.includes(prevId)) {
+      const prevUnit = db.bloodUnits.find(u => u.id === prevId);
+      if (prevUnit && prevUnit.bloodBankId === bankId && prevUnit.reservedForRequestId === request.id) {
+        prevUnit.availability = 'Available';
+        prevUnit.reservedForRequestId = undefined;
+      }
+    }
+  });
+
   // Atomic state commit
   uniqueUnitIds.forEach(uId => {
     const u = db.bloodUnits.find(unit => unit.id === uId);
@@ -2514,9 +2939,16 @@ export const allocateUnitsToRequest = async (req: AuthenticatedRequest, res: Res
     }
   });
 
+  // Preserve other banks' assigned units in multi-bank scenarios
+  const otherBanksUnits = (request.assignedUnitIds || []).filter(id => {
+    const u = db.bloodUnits.find(unit => unit.id === id);
+    return u && u.bloodBankId !== bankId;
+  });
+  const allAssignedUnits = [...otherBanksUnits, ...uniqueUnitIds];
+
   const now = new Date().toISOString();
-  request.assignedUnitIds = uniqueUnitIds;
-  request.fulfilledUnits = uniqueUnitIds.length;
+  request.assignedUnitIds = allAssignedUnits;
+  request.fulfilledUnits = allAssignedUnits.length;
   request.status = request.fulfilledUnits >= request.quantityUnits ? 'Reserved' : 'Partially Fulfilled';
   request.updatedAt = now;
   request.timeline.push({
@@ -2526,20 +2958,23 @@ export const allocateUnitsToRequest = async (req: AuthenticatedRequest, res: Res
     actor: req.user?.name || 'Blood Bank Staff'
   });
 
-  // Emit Authoritative In-App Notification to Requesting Hospital
-  db.notifications.unshift({
-    id: `NOTIF-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+  // Emit Authoritative In-App Notification to Requesting Hospital (normal update, non-alarm)
+  await notificationService.dispatchNotification({
     userId: request.hospitalId,
     title: `Requisition ${request.id} Units Allocated`,
     message: `${uniqueUnitIds.length} unit(s) of ${request.bloodGroup} ${request.component} have been allocated and reserved by ${bb?.bloodBankName || bb?.name || 'Blood Bank'}.`,
     type: 'request_update',
-    priority: request.urgency === 'Emergency' ? 'urgent' : 'high',
-    read: false,
-    createdAt: now,
-    link: '/hospital/requests'
+    priority: 'medium',
+    link: `/hospital/requests?requestId=${request.id}`,
+    data: {
+      requestId: request.id,
+      urgency: request.urgency,
+      bloodGroup: request.bloodGroup,
+      component: request.component,
+      allocatedCount: uniqueUnitIds.length,
+      allocatedUnitIds: uniqueUnitIds
+    }
   });
-
-  db.saveSnapshot();
 
   res.json({
     success: true,
@@ -2623,19 +3058,14 @@ export const releaseAllocatedUnits = async (req: AuthenticatedRequest, res: Resp
   });
 
   // Emit Notification to Hospital
-  db.notifications.unshift({
-    id: `NOTIF-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+  await notificationService.dispatchNotification({
     userId: request.hospitalId,
     title: `Requisition ${request.id} Allocation Released`,
     message: `Allocated units for requisition ${request.id} (${request.bloodGroup} ${request.component}) were released back to stock. Reason: ${reason || 'Operational adjustment'}.`,
     type: 'request_update',
     priority: 'medium',
-    read: false,
-    createdAt: now,
     link: '/hospital/requests'
   });
-
-  db.saveSnapshot();
 
   res.json({
     success: true,
@@ -2872,6 +3302,177 @@ export const confirmDispatch = async (req: AuthenticatedRequest, res: Response) 
     request
   });
 };
+
+/**
+ * Direct Dispatch Requisition (Prepare and dispatch manifest in unified transition)
+ */
+export const dispatchRequisition = async (req: AuthenticatedRequest, res: Response) => {
+  await safeSupabaseSync();
+
+  const bb = resolveBloodBank(req);
+  const bankId = bb?.id || req.user?.id;
+
+  if (!bankId) {
+    return res.status(401).json({ success: false, error: 'Unauthorized blood center' });
+  }
+
+  const { id } = req.params;
+  const { 
+    courierType, 
+    courierReference, 
+    packagingType, 
+    targetTransportTemp, 
+    coldChainMonitoring, 
+    specialHandlingInstructions,
+    specialInstructions,
+    notes 
+  } = req.body;
+
+  const request = db.bloodRequests.find(r => r.id === id);
+  if (!request) {
+    return res.status(404).json({ success: false, error: 'Requisition not found' });
+  }
+
+  if (request.bloodBankId !== bankId) {
+    return res.status(403).json({ success: false, error: 'Access denied: Requisition belongs to another blood center' });
+  }
+
+  if (!request.assignedUnitIds || request.assignedUnitIds.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Cannot dispatch: No blood units have been allocated to this requisition.'
+    });
+  }
+
+  if (request.status === 'Dispatched' || request.status === 'Fulfilled') {
+    const existingDispatch = db.bloodDispatches.find(d => d.id === request.dispatchId);
+    return res.json({
+      success: true,
+      message: `Requisition is already ${request.status.toLowerCase()}.`,
+      dispatch: existingDispatch,
+      request
+    });
+  }
+
+  // Construct unit items snapshot with persisted metadata
+  const unitItems: DispatchUnitItem[] = [];
+  for (const uId of request.assignedUnitIds) {
+    const u = db.bloodUnits.find(unit => unit.id === uId);
+    if (!u) {
+      return res.status(404).json({ success: false, error: `Allocated unit ${uId} not found in inventory.` });
+    }
+    unitItems.push({
+      unitId: u.id,
+      bloodGroup: u.bloodGroup,
+      component: u.component,
+      volumeMl: u.volumeMl || 450,
+      collectionDate: u.collectionDate || new Date().toISOString().split('T')[0],
+      expiryDate: u.expiryDate,
+      storageLocation: u.storageLocation || 'Main Cold Storage',
+      testingStatus: u.testingStatus
+    });
+  }
+
+  let defaultPackaging: 'Standard Passive Thermal Container with Ice Gel Packs' | 'Validated Cold-Chain Shipper' | 'Platelet Transit Agitator Box' = 'Standard Passive Thermal Container with Ice Gel Packs';
+  let defaultTemp = '2°C to 6°C (Chilled)';
+  let defaultHandling = 'Maintain cold chain at 2°C to 6°C. Keep upright. Do not freeze.';
+
+  if (request.component === 'Platelets') {
+    defaultPackaging = 'Platelet Transit Agitator Box';
+    defaultTemp = '20°C to 24°C (Ambient)';
+    defaultHandling = 'Maintain ambient 20°C to 24°C with continuous agitation or validated transport box. Do not refrigerate or freeze.';
+  } else if (request.component === 'Plasma') {
+    defaultPackaging = 'Validated Cold-Chain Shipper';
+    defaultTemp = '-18°C or lower (Frozen)';
+    defaultHandling = 'Ship frozen with dry ice / eutectic ice packs. Do not thaw.';
+  }
+
+  const dispatchId = request.dispatchId || `DSP-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+  const now = new Date().toISOString();
+
+  let dispatch = db.bloodDispatches.find(d => d.id === dispatchId);
+  if (!dispatch) {
+    const newDispatch: BloodDispatch = {
+      id: dispatchId,
+      requestId: request.id,
+      bloodBankId: bankId,
+      bloodBankName: bb?.bloodBankName || bb?.name || 'Regional Blood Center',
+      hospitalId: request.hospitalId,
+      hospitalName: request.hospitalName,
+      patientReferenceId: request.patientReferenceId,
+      department: request.department,
+      component: request.component,
+      bloodGroup: request.bloodGroup,
+      unitIds: [...request.assignedUnitIds],
+      unitItems,
+      quantityUnits: unitItems.length,
+      status: 'In Transit',
+      courierType: courierType || 'Dedicated Hospital Courier',
+      courierReference: courierReference || undefined,
+      packagingType: packagingType || defaultPackaging,
+      targetTransportTemp: targetTransportTemp || defaultTemp,
+      coldChainMonitoring: coldChainMonitoring || 'Passive Temp Strips',
+      specialHandlingInstructions: specialInstructions || specialHandlingInstructions || defaultHandling,
+      preparedAt: now,
+      preparedBy: req.user?.name || 'Blood Bank Dispatch Supervisor',
+      dispatchedAt: now,
+      dispatchedBy: req.user?.name || 'Blood Bank Dispatch Officer',
+      auditHistory: [
+        {
+          action: 'Dispatched',
+          timestamp: now,
+          operator: req.user?.name || 'Blood Bank Dispatch Officer',
+          notes: notes || `Direct dispatch manifest generated and handed off to courier ${courierReference || courierType || 'Dedicated Courier'}.`
+        }
+      ],
+      createdAt: now,
+      updatedAt: now
+    };
+    db.bloodDispatches.unshift(newDispatch);
+    dispatch = newDispatch;
+  } else {
+    dispatch.status = 'In Transit';
+    dispatch.dispatchedAt = now;
+    dispatch.dispatchedBy = req.user?.name || 'Blood Bank Dispatch Officer';
+    if (courierReference) dispatch.courierReference = courierReference;
+    dispatch.auditHistory.push({
+      action: 'Dispatched',
+      timestamp: now,
+      operator: req.user?.name || 'Blood Bank Dispatch Officer',
+      notes: notes || 'Courier handoff confirmed.'
+    });
+    dispatch.updatedAt = now;
+  }
+
+  // Transition assigned units to 'Issued'
+  (request.assignedUnitIds || []).forEach(uId => {
+    const u = db.bloodUnits.find(unit => unit.id === uId);
+    if (u && u.bloodBankId === bankId) {
+      u.availability = 'Issued';
+    }
+  });
+
+  request.dispatchId = dispatchId;
+  request.dispatchStatus = 'In Transit';
+  request.status = 'Dispatched';
+  request.updatedAt = now;
+  request.timeline.push({
+    status: 'Dispatched',
+    updatedAt: now,
+    note: notes || `Requisition dispatched with manifest ${dispatchId}. Handed off to courier ${courierReference || courierType || 'Dedicated Courier'}.`,
+    actor: req.user?.name || 'Blood Bank Dispatch'
+  });
+
+  db.saveSnapshot();
+
+  res.json({
+    success: true,
+    message: `Requisition ${request.id} dispatched successfully.`,
+    dispatch,
+    request
+  });
+};
+
 
 /**
  * 8. Get Authoritative Printable Dispatch Slip / Packing Document Data
@@ -3877,18 +4478,14 @@ export const acceptCampRequest = async (req: AuthenticatedRequest, res: Response
   campReq.updatedAt = new Date().toISOString();
 
   // Dispatch notification to requesting donor
-  db.notifications.unshift({
-    id: `notif-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+  await notificationService.dispatchNotification({
     userId: campReq.donorId,
     title: 'Camp Request Approved! 🎉',
     message: `Your donation camp request for ${campReq.organizationName} on ${campDate} has been approved and scheduled by ${bankName}!`,
     type: 'camp',
     priority: 'medium',
-    read: false,
-    createdAt: new Date().toISOString()
+    link: '/donor/camps'
   });
-
-  db.saveSnapshot();
 
   res.json({
     success: true,
@@ -3921,18 +4518,14 @@ export const rejectCampRequest = async (req: AuthenticatedRequest, res: Response
   campReq.updatedAt = new Date().toISOString();
 
   // Dispatch notification to requesting donor
-  db.notifications.unshift({
-    id: `notif-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+  await notificationService.dispatchNotification({
     userId: campReq.donorId,
     title: 'Camp Request Update',
     message: `Your camp request for ${campReq.organizationName} could not be accommodated by ${bankName}. Reason: ${campReq.statusNote}`,
     type: 'camp',
     priority: 'medium',
-    read: false,
-    createdAt: new Date().toISOString()
+    link: '/donor/camps'
   });
-
-  db.saveSnapshot();
 
   res.json({
     success: true,

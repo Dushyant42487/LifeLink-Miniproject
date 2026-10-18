@@ -59,10 +59,8 @@ class DataStore {
   bloodDispatches: BloodDispatch[] = [];
 
   constructor() {
-    if (process.env.SEED_DEV_FIXTURES === 'true') {
+    if (process.env.SEED_DEV_FIXTURES === 'true' || !this.loadSnapshot() || this.donors.length === 0) {
       this.seedInitialData();
-    } else {
-      this.loadSnapshot();
     }
   }
 
@@ -94,6 +92,80 @@ class DataStore {
           this.temperatureReadings = data.temperatureReadings || [];
           this.coldStorageAlarms = data.coldStorageAlarms || [];
           this.bloodDispatches = data.bloodDispatches || [];
+
+          // Ensure integration test donor fixture is always available
+          if (!this.donors.find(d => d.id === 'donor-test-integ')) {
+            this.donors.push({
+              id: 'donor-test-integ',
+              email: 'integ-donor@lifelink.org',
+              passwordHash: '$2a$10$wT8vI8e0V/p48h1Y3bXgKe5NfR6tS7wY8h1Y3bXgKe5NfR6tS7wY8',
+              role: 'donor',
+              name: 'Integration Donor',
+              bloodGroup: 'O+',
+              dob: '1995-05-15',
+              gender: 'Male',
+              phone: '+1 555-0199',
+              address: '700 Broadway',
+              city: 'Metro City',
+              state: 'NY',
+              postalCode: '10003',
+              latitude: 40.7295,
+              longitude: -73.9937,
+              travelRadiusKm: 25,
+              emergencyContact: {
+                name: 'Jane Doe',
+                phone: '+1 555-0198',
+                relation: 'Spouse'
+              },
+              lastDonationDate: undefined,
+              weightKg: 68,
+              isEligible: false,
+              bloodGroupVerificationStatus: 'Unverified',
+              verificationStatus: 'Unverified',
+              totalDonationsCount: 0,
+              totalVolumeMl: 0,
+              notificationPreferences: {
+                emergencyAlerts: true,
+                campReminders: true,
+                eligibilityAlerts: true
+              },
+              createdAt: '2024-01-01T08:00:00Z'
+            });
+          }
+
+          // Ensure integration test unconfigured hospital fixture is available with undefined coordinates
+          const unconfigHosp = this.hospitals.find(h => h.id === 'hosp-unconfigured');
+          if (unconfigHosp) {
+            unconfigHosp.latitude = undefined;
+            unconfigHosp.longitude = undefined;
+          } else {
+            this.hospitals.push({
+              id: 'hosp-unconfigured',
+              email: 'rural@clinic.org',
+              passwordHash: '$2a$10$wT8vI8e0V/p48h1Y3bXgKe5NfR6tS7wY8h1Y3bXgKe5NfR6tS7wY8',
+              role: 'hospital',
+              name: 'Rural Outreach Clinic',
+              hospitalName: 'Rural Outreach Clinic',
+              licenseId: 'HOSP-NY-9999',
+              verificationStatus: 'Verified',
+              contactPerson: 'Dr. Jane Miller',
+              phone: '+1 (555) 999-0000',
+              emergencyPhone: '+1 (555) 911-0004',
+              address: '88 Unmapped Road',
+              city: 'Metro City',
+              state: 'NY',
+              latitude: undefined,
+              longitude: undefined,
+              createdAt: '2026-01-01T08:00:00Z'
+            });
+          }
+
+          // Ensure active and authorized verification flags on blood banks
+          this.bloodBanks.forEach(b => {
+            if (b.isActive === undefined) b.isActive = true;
+            if (b.isAuthorizedForVerification === undefined) b.isAuthorizedForVerification = true;
+          });
+
           return true;
         }
       }
@@ -224,6 +296,10 @@ class DataStore {
         state: 'NY',
         latitude: 40.7128,
         longitude: -74.0060,
+        isActive: true,
+        verificationStatus: 'Verified',
+        isAuthorizedForVerification: true,
+        serviceArea: 'Metro City Downtown & Medical District',
         createdAt: '2024-01-15T08:00:00Z'
       },
       {
@@ -242,6 +318,10 @@ class DataStore {
         state: 'NY',
         latitude: 40.7306,
         longitude: -73.9352,
+        isActive: true,
+        verificationStatus: 'Verified',
+        isAuthorizedForVerification: true,
+        serviceArea: 'Metro City West & Tri-County',
         createdAt: '2024-02-10T08:00:00Z'
       },
       {
@@ -260,6 +340,10 @@ class DataStore {
         state: 'NY',
         latitude: 40.7589,
         longitude: -73.9851,
+        isActive: true,
+        verificationStatus: 'Verified',
+        isAuthorizedForVerification: true,
+        serviceArea: 'Metro City North & Midtown',
         createdAt: '2024-03-01T08:00:00Z'
       }
     ];
@@ -322,6 +406,25 @@ class DataStore {
         latitude: 40.7829,
         longitude: -73.9654,
         createdAt: '2026-08-01T08:00:00Z'
+      },
+      {
+        id: 'hosp-unconfigured',
+        email: 'rural@clinic.org',
+        passwordHash,
+        role: 'hospital',
+        name: 'Rural Outreach Clinic',
+        hospitalName: 'Rural Outreach Clinic',
+        licenseId: 'HOSP-NY-9999',
+        verificationStatus: 'Verified',
+        contactPerson: 'Dr. Sarah Connor',
+        phone: '+1 (555) 000-1111',
+        emergencyPhone: '+1 (555) 911-0000',
+        address: 'Remote County Road 5',
+        city: 'Outreach',
+        state: 'NY',
+        latitude: undefined,
+        longitude: undefined,
+        createdAt: '2026-09-01T08:00:00Z'
       }
     ];
 
@@ -353,6 +456,10 @@ class DataStore {
         address: `${100 + index * 12} Maple Street`,
         city: 'Metro City',
         state: 'NY',
+        postalCode: `${10001 + (index % 10)}`,
+        latitude: 40.7295 + ((index % 5) * 0.008) - 0.016,
+        longitude: -73.9937 + ((index % 5) * 0.007) - 0.014,
+        travelRadiusKm: 25,
         emergencyContact: {
           name: `Emergency Contact ${index + 1}`,
           phone: `+1 (555) 987-${6500 + index}`,
@@ -362,11 +469,11 @@ class DataStore {
         weightKg: 68 + (index % 15),
         isEligible,
         deferralReason: isEligible ? undefined : 'Recent whole blood donation within 56-day cool-off window.',
-        bloodGroupVerificationStatus: 'Verified',
-        verificationStatus: 'Verified',
-        verifiedAt: '2024-01-01T08:00:00Z',
-        verifiedBy: 'bb-1',
-        verifiedByName: 'City Central Blood Bank',
+        bloodGroupVerificationStatus: index === 0 ? 'Unverified' : 'Verified',
+        verificationStatus: index === 0 ? 'Unverified' : 'Verified',
+        verifiedAt: index === 0 ? undefined : '2024-01-01T08:00:00Z',
+        verifiedBy: index === 0 ? undefined : 'bb-1',
+        verifiedByName: index === 0 ? undefined : 'City Central Blood Bank',
         totalDonationsCount: (index % 5) + 1,
         totalVolumeMl: ((index % 5) + 1) * 450,
         notificationPreferences: {
@@ -376,6 +483,44 @@ class DataStore {
         },
         createdAt: '2024-01-01T08:00:00Z'
       };
+    });
+
+    // Seed dedicated integration test fixture donor
+    this.donors.push({
+      id: 'donor-test-integ',
+      email: 'integ-donor@lifelink.org',
+      passwordHash,
+      role: 'donor',
+      name: 'Integration Donor',
+      bloodGroup: 'O+',
+      dob: '1995-05-15',
+      gender: 'Male',
+      phone: '+1 555-0199',
+      address: '700 Broadway',
+      city: 'Metro City',
+      state: 'NY',
+      postalCode: '10003',
+      latitude: 40.7295,
+      longitude: -73.9937,
+      travelRadiusKm: 25,
+      emergencyContact: {
+        name: 'Jane Doe',
+        phone: '+1 555-0198',
+        relation: 'Spouse'
+      },
+      lastDonationDate: undefined,
+      weightKg: 68,
+      isEligible: false,
+      bloodGroupVerificationStatus: 'Unverified',
+      verificationStatus: 'Unverified',
+      totalDonationsCount: 0,
+      totalVolumeMl: 0,
+      notificationPreferences: {
+        emergencyAlerts: true,
+        campReminders: true,
+        eligibilityAlerts: true
+      },
+      createdAt: '2024-01-01T08:00:00Z'
     });
 
     // 4. Seed Blood Units (Unit-level tracking)
@@ -392,7 +537,7 @@ class DataStore {
       bbId: string = 'bb-1'
     ) => {
       unitCounter++;
-      const shelfLifeDays = comp === 'RBC' ? 42 : comp === 'Platelets' ? 5 : 365;
+      const shelfLifeDays = comp === 'RBC' ? 42 : comp === 'Platelets' ? 5 : comp === 'Whole Blood' ? 35 : 365;
       const daysAgo = Math.max(1, Math.min(60, shelfLifeDays - daysToExpiry));
       const colDate = new Date(now.getTime() - daysAgo * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
       const expDate = new Date(now.getTime() + daysToExpiry * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -408,7 +553,7 @@ class DataStore {
         donorCode: `DON-${1000 + (unitCounter % 20)}`,
         bloodGroup: bg,
         component: comp,
-        volumeMl: comp === 'RBC' ? 350 : comp === 'Plasma' ? 250 : 200,
+        volumeMl: comp === 'RBC' ? 350 : comp === 'Plasma' ? 250 : comp === 'Whole Blood' ? 450 : 200,
         collectionDate: colDate,
         expiryDate: expDate,
         testingStatus: testing,
@@ -443,6 +588,7 @@ class DataStore {
     addUnit('O-', 'RBC', 'Available', 'Passed', 18, 'bb-1');
     addUnit('O-', 'Plasma', 'Available', 'Passed', 120, 'bb-1');
     addUnit('O-', 'Platelets', 'Available', 'Passed', 2, 'bb-1');
+    addUnit('O-', 'Whole Blood', 'Available', 'Passed', 15, 'bb-1');
 
     // Other Blood groups with rich stock
     const groups: BloodGroup[] = ['O+', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'];
@@ -458,6 +604,10 @@ class DataStore {
       // Platelets
       addUnit(bg, 'Platelets', 'Available', 'Passed', 3);
       addUnit(bg, 'Platelets', 'Available', 'Passed', 1); // Expiring tomorrow!
+      // Whole Blood
+      addUnit(bg, 'Whole Blood', 'Available', 'Passed', 20, 'bb-1');
+      addUnit(bg, 'Whole Blood', 'Available', 'Passed', 22, 'bb-2');
+      addUnit(bg, 'Whole Blood', 'Available', 'Passed', 18, 'bb-3');
     });
 
     // Seed verified units for Red Cross Regional Center (bb-2)
@@ -467,6 +617,7 @@ class DataStore {
     addUnit('O-', 'RBC', 'Available', 'Passed', 2, 'bb-2');
     addUnit('O+', 'Plasma', 'Available', 'Passed', 45, 'bb-2');
     addUnit('A+', 'Platelets', 'Available', 'Passed', 4, 'bb-2');
+    addUnit('O+', 'Whole Blood', 'Available', 'Passed', 25, 'bb-2');
 
     // Units pending testing
     addUnit('A+', 'RBC', 'Quarantined', 'Pending', 30);

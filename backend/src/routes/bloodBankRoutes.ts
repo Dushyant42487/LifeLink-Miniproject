@@ -20,6 +20,7 @@ import {
   getCampCollections,
   searchDonors,
   getDonorDetails,
+  getDonorVerificationQueue,
   verifyDonorEligibility,
   recordBloodCollection,
   getBloodCollections,
@@ -47,11 +48,18 @@ import {
   getEmergencyAllocationMatrix,
   getBloodBankCampRequests,
   acceptCampRequest,
-  rejectCampRequest
+  rejectCampRequest,
+  getEligibleBloodBankDirectory,
+  getBloodBankOffers,
+  respondToBloodBankOffer,
+  dispatchRequisition
 } from '../controllers/bloodBankController';
 import { authenticateToken, requireRole } from '../middleware/auth';
 
 const router = Router();
+
+// Publicly accessible to all authenticated roles (donors, hospitals, blood banks, admins)
+router.get('/eligible-directory', authenticateToken, getEligibleBloodBankDirectory);
 
 router.use(authenticateToken);
 router.use(requireRole(['blood_bank']));
@@ -70,6 +78,10 @@ router.get('/expiry', getExpiryMonitoring);
 router.put('/requests/:id/fulfill', fulfillHospitalRequest);
 router.get('/reports', getReports);
 
+// Smart Routing & Incoming Offers Desk
+router.get('/offers', getBloodBankOffers);
+router.post('/offers/:id/respond', respondToBloodBankOffer);
+
 // Phase 5D: Hospital Requisitions Fulfillment & Dispatch Desk
 router.get('/requests', getBloodBankRequests);
 router.get('/requests/:id', getBloodBankRequestById);
@@ -78,6 +90,7 @@ router.post('/requests/:id/allocate', allocateUnitsToRequest);
 router.post('/requests/:id/release-allocation', releaseAllocatedUnits);
 router.post('/requests/:id/prepare-dispatch', prepareDispatch);
 router.post('/requests/:id/confirm-dispatch', confirmDispatch);
+router.post('/requests/:id/dispatch', dispatchRequisition);
 router.get('/dispatches/:id/slip', getDispatchSlip);
 router.get('/requests/:id/dispatch-slip', getDispatchSlip);
 router.get('/allocation-matrix', getEmergencyAllocationMatrix);
@@ -97,6 +110,7 @@ router.post('/camp-requests/:id/reject', rejectCampRequest);
 
 // Donors & Collections
 router.get('/donors/search', searchDonors);
+router.get('/donors/verification-queue', getDonorVerificationQueue);
 router.get('/donors/:id', getDonorDetails);
 router.post('/donors/:id/verify', verifyDonorEligibility);
 router.get('/collections', getBloodCollections);

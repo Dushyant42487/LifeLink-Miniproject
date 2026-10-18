@@ -4,7 +4,7 @@ import { hospitalApi } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { BloodRequest, RequestStatus, PatientSample, RequestMessage } from '../../types';
 import { StatusBadge } from '../../components/common/StatusBadge';
-import { FileText, CheckCircle2, Clock, MessageSquare, TestTube, ArrowRight, RefreshCw, AlertCircle, PlusCircle, ShieldCheck, X, Truck, Printer, AlertTriangle, PackageCheck } from 'lucide-react';
+import { FileText, CheckCircle2, Clock, MessageSquare, TestTube, ArrowRight, RefreshCw, AlertCircle, PlusCircle, ShieldCheck, X, Truck, Printer, AlertTriangle, PackageCheck, Radio, MapPin } from 'lucide-react';
 
 export const HospitalRequestsPage: React.FC = () => {
   const { user } = useAuth();
@@ -512,6 +512,144 @@ export const HospitalRequestsPage: React.FC = () => {
               )}
 
             </div>
+
+            {/* Automatic Smart Routing Candidate Ledger */}
+            {(selectedReq.isAutoRouted || (selectedReq.routedBankOffers && selectedReq.routedBankOffers.length > 0)) && (
+              <div className="bg-white rounded-2xl border border-indigo-100 p-6 shadow-sm space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-indigo-50 pb-3 gap-2">
+                  <div className="flex items-center space-x-2.5">
+                    <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600">
+                      <Radio className="w-4 h-4 animate-pulse" />
+                    </div>
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <h3 className="font-bold text-sm text-slate-900">
+                          Automated Smart Emergency Routing
+                        </h3>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black tracking-wide uppercase bg-indigo-100 text-indigo-800">
+                          {selectedReq.routingStatus || 'Active'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500">
+                        Search Radius: <strong>{selectedReq.routingSearchRadiusKm || 25} km</strong> • Escalation Steps: <strong>{selectedReq.routingExpansionCount || 0}</strong> • Unfulfilled Quantity: <strong className="text-blood-600">{selectedReq.remainingUnitsToFulfill ?? (selectedReq.quantityUnits - (selectedReq.fulfilledUnits || 0))} units</strong>
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right text-xs">
+                    <span className="text-slate-400 block text-[10px]">Total Requested</span>
+                    <strong className="text-slate-900 font-mono text-sm">{selectedReq.quantityUnits} Units</strong>
+                  </div>
+                </div>
+
+                {/* Candidate Banks Ledger Table */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-bold border-y border-slate-100">
+                      <tr>
+                        <th className="py-2.5 px-3">Invited Blood Bank</th>
+                        <th className="py-2.5 px-3">Distance</th>
+                        <th className="py-2.5 px-3 text-center">Offered</th>
+                        <th className="py-2.5 px-3 text-center">Committed</th>
+                        <th className="py-2.5 px-3">Offer Status</th>
+                        <th className="py-2.5 px-3">Response / Details</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {(selectedReq.routedBankOffers || []).length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="py-4 text-center text-slate-400 italic">
+                            No blood banks invited yet or searching in progress.
+                          </td>
+                        </tr>
+                      ) : (
+                        (selectedReq.routedBankOffers || []).map((offer, idx) => {
+                          const isPending = offer.status === 'Offered';
+                          const isAccepted = offer.status === 'Accepted';
+                          const isDeclined = offer.status === 'Declined';
+                          const isExpired = offer.status === 'Expired';
+                          const isSuperseded = offer.status === 'Superseded';
+
+                          return (
+                            <tr key={offer.id || idx} className="hover:bg-slate-50/60 transition-colors">
+                              <td className="py-2.5 px-3">
+                                <span className="font-bold text-slate-800 block">{offer.bloodBankName}</span>
+                                <span className="font-mono text-[10px] text-slate-400">ID: {offer.bloodBankId}</span>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className="inline-flex items-center space-x-1 font-mono text-slate-700 bg-slate-100 px-2 py-0.5 rounded text-[11px]">
+                                  <MapPin className="w-3 h-3 text-slate-400" />
+                                  <span>{offer.distanceKm} km</span>
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-900">
+                                {offer.offeredUnits}
+                              </td>
+                              <td className="py-2.5 px-3 text-center font-mono font-bold text-emerald-700">
+                                {offer.acceptedUnits || 0}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  isAccepted
+                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                    : isPending
+                                    ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                                    : isDeclined
+                                    ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                    : isSuperseded
+                                    ? 'bg-slate-100 text-slate-600 border border-slate-200'
+                                    : 'bg-slate-100 text-slate-500'
+                                }`}>
+                                  {offer.status}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-[11px] text-slate-600">
+                                {isPending && (
+                                  <span className="text-amber-700 flex items-center space-x-1">
+                                    <Clock className="w-3 h-3" />
+                                    <span>Expires {new Date(offer.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                  </span>
+                                )}
+                                {isAccepted && (
+                                  <span className="text-emerald-700 font-medium">
+                                    Committed at {offer.respondedAt ? new Date(offer.respondedAt).toLocaleTimeString() : 'Recently'}
+                                  </span>
+                                )}
+                                {isDeclined && (
+                                  <span className="text-rose-600 italic">
+                                    {offer.declineReason || 'Facility declined'}
+                                  </span>
+                                )}
+                                {isExpired && (
+                                  <span className="text-slate-400">
+                                    No response before deadline
+                                  </span>
+                                )}
+                                {isSuperseded && (
+                                  <span className="text-slate-400">
+                                    Fulfilled by earlier responding bank
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Routing Transparency Note */}
+                <div className="bg-indigo-50/50 rounded-xl p-3 border border-indigo-100 text-[11px] text-indigo-900 flex items-start space-x-2">
+                  <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold">Autonomous Multi-Facility Allocation:</span>
+                    <p className="text-indigo-800/80 mt-0.5 leading-relaxed">
+                      LifeLink verifies real clinically cleared, unreserved units before dispatching offers. When an authorized blood bank commits units, they are locked immediately without manual phone calls.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Linked Patient Cross-Match Samples */}
             <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">

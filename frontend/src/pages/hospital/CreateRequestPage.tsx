@@ -61,11 +61,9 @@ export const CreateRequestPage: React.FC<CreateRequestPageProps> = ({ forcedInit
         const res = await apiFetch('/public/locations');
         if (res.success && res.bloodBanks && res.bloodBanks.length > 0) {
           setAvailableBloodBanks(res.bloodBanks);
-          const found = res.bloodBanks.find((b: any) => b.id === initialBloodBankId);
-          if (found) {
-            setBloodBankId(found.id);
-          } else {
-            setBloodBankId(res.bloodBanks[0].id);
+          if (initialBloodBankId) {
+            const found = res.bloodBanks.find((b: any) => b.id === initialBloodBankId);
+            if (found) setBloodBankId(found.id);
           }
         }
       } catch (e) {
@@ -131,7 +129,7 @@ export const CreateRequestPage: React.FC<CreateRequestPageProps> = ({ forcedInit
       department: department.trim(),
       requiredByDate,
       notes: notes.trim(),
-      bloodBankId,
+      bloodBankId: bloodBankId || undefined,
       targetUnitId: targetUnitId.trim() || undefined,
       idempotencyKey: submissionKey
     });
@@ -241,20 +239,38 @@ export const CreateRequestPage: React.FC<CreateRequestPageProps> = ({ forcedInit
         </div>
       )}
 
-      {/* Error Banner with refresh option */}
+      {/* Error Banner with actionable location configuration */}
       {error && (
-        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-xs text-rose-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center space-x-2">
-            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-            <span>{error}</span>
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-xs text-rose-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-start sm:items-center space-x-2.5">
+            <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5 sm:mt-0" />
+            <div>
+              <p className="font-semibold text-rose-950">{error}</p>
+              {error.toLowerCase().includes('location') && (
+                <p className="text-[11px] text-rose-700 mt-0.5">
+                  LifeLink automatic routing requires genuine hospital geographic coordinates to compute spatial distance and candidate rankings.
+                </p>
+              )}
+            </div>
           </div>
-          <Link
-            to={returnSearchUrl}
-            className="inline-flex items-center space-x-1 text-xs font-bold text-rose-700 hover:text-rose-900 underline shrink-0"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>Refresh Regional Availability</span>
-          </Link>
+          <div className="flex items-center space-x-2 shrink-0">
+            {error.toLowerCase().includes('location') && (
+              <Link
+                to="/hospital/profile"
+                className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-xs shadow-xs transition"
+              >
+                <span>Configure Hospital Location</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </Link>
+            )}
+            <Link
+              to={returnSearchUrl}
+              className="inline-flex items-center space-x-1 text-xs font-bold text-rose-700 hover:text-rose-900 underline shrink-0"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Refresh Regional Availability</span>
+            </Link>
+          </div>
         </div>
       )}
 
@@ -401,24 +417,33 @@ export const CreateRequestPage: React.FC<CreateRequestPageProps> = ({ forcedInit
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Target Blood Bank Dispatch Hub
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Dispatch Destination / Blood Bank
+                  </label>
+                  {!bloodBankId && (
+                    <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                      Smart Automatic Routing Active
+                    </span>
+                  )}
+                </div>
                 <select
                   value={bloodBankId}
                   onChange={(e) => setBloodBankId(e.target.value)}
                   className="w-full px-3 py-2.5 text-xs border border-slate-300 rounded-xl bg-white text-slate-900 focus:ring-blood-500 cursor-pointer"
                 >
-                  {availableBloodBanks.length > 0 ? (
-                    availableBloodBanks.map((bb: any) => (
-                      <option key={bb.id} value={bb.id}>
-                        {bb.name} {bb.city ? `(${bb.city})` : ''}
-                      </option>
-                    ))
-                  ) : (
-                    <option value={bloodBankId || 'bb-1'}>Regional Blood Dispatch Center</option>
-                  )}
+                  <option value="">⚡ Automatic Smart Routing (Recommended — Nearest eligible banks with stock)</option>
+                  {availableBloodBanks.map((bb: any) => (
+                    <option key={bb.id} value={bb.id}>
+                      Direct Facility Requisition: {bb.name} {bb.city ? `(${bb.city})` : ''}
+                    </option>
+                  ))}
                 </select>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  {bloodBankId 
+                    ? 'Manual destination selected. Offer will be dispatched directly to this facility.'
+                    : 'LifeLink will automatically rank nearby blood banks by distance and genuinely available stock, dispatching per-bank offers.'}
+                </p>
               </div>
             </div>
 

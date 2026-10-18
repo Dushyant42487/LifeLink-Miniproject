@@ -25,6 +25,9 @@ import {
   FileText, 
   Activity, 
   ShieldAlert,
+  ShieldCheck,
+  FileCheck,
+  ExternalLink,
   Info,
   Building2
 } from 'lucide-react';
@@ -32,7 +35,21 @@ import {
 export const CollectionsPage: React.FC = () => {
   const navigate = useNavigate();
 
-  const [activeTab, setActiveTab] = useState<'phlebotomy' | 'camps' | 'camp-requests' | 'fractionation'>('phlebotomy');
+  const [activeTab, setActiveTab] = useState<'phlebotomy' | 'camps' | 'camp-requests' | 'fractionation' | 'verification-queue'>('phlebotomy');
+
+  // ==========================================
+  // TAB 5: DONOR VERIFICATION QUEUE STATE
+  // ==========================================
+  const [verificationQueue, setVerificationQueue] = useState<any[]>([]);
+  const [loadingVerificationQueue, setLoadingVerificationQueue] = useState(false);
+  const [verificationQueueError, setVerificationQueueError] = useState<string | null>(null);
+  const [selectedVerificationDonor, setSelectedVerificationDonor] = useState<any | null>(null);
+  const [showVerifyModal, setShowVerifyModal] = useState(false);
+  const [verifyDecision, setVerifyDecision] = useState<'Verified' | 'Rejected' | 'Needs More Info'>('Verified');
+  const [verifyConfirmedBloodGroup, setVerifyConfirmedBloodGroup] = useState<BloodGroup>('O+');
+  const [verifyNotes, setVerifyNotes] = useState('');
+  const [submittingVerification, setSubmittingVerification] = useState(false);
+  const [verificationActionMessage, setVerificationActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // ==========================================
   // TAB 1: PHLEBOTOMY LOGGER STATE
@@ -173,10 +190,75 @@ export const CollectionsPage: React.FC = () => {
     fetchCamps();
     fetchRecentCollections();
     fetchCampRequests();
+    fetchVerificationQueue();
     if (activeTab === 'fractionation') {
       fetchFractionationData();
     }
   }, [activeTab]);
+
+  const fetchVerificationQueue = async () => {
+    setLoadingVerificationQueue(true);
+    setVerificationQueueError(null);
+    try {
+      const res = await bloodBankApi.getDonorVerificationQueue();
+      if (res.success && res.queue) {
+        setVerificationQueue(res.queue);
+      } else {
+        setVerificationQueueError(res.error || 'Failed to load verification queue.');
+      }
+    } catch {
+      setVerificationQueueError('Unable to connect to LifeLink server.');
+    } finally {
+      setLoadingVerificationQueue(false);
+    }
+  };
+
+  const handleOpenVerifyModal = (donor: any) => {
+    setSelectedVerificationDonor(donor);
+    setVerifyDecision('Verified');
+    setVerifyConfirmedBloodGroup((donor.bloodGroup as BloodGroup) || 'O+');
+    setVerifyNotes(donor.verificationNotes || '');
+    setVerificationActionMessage(null);
+    setShowVerifyModal(true);
+  };
+
+  const handlePerformVerification = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedVerificationDonor) return;
+    if (verifyDecision === 'Rejected' && !verifyNotes.trim()) {
+      setVerificationActionMessage({ type: 'error', text: 'A rejection reason is required.' });
+      return;
+    }
+    if (verifyDecision === 'Needs More Info' && !verifyNotes.trim()) {
+      setVerificationActionMessage({ type: 'error', text: 'Please specify what additional information or document is required.' });
+      return;
+    }
+
+    setSubmittingVerification(true);
+    setVerificationActionMessage(null);
+    try {
+      const res = await bloodBankApi.verifyDonor(selectedVerificationDonor.id, {
+        status: verifyDecision,
+        bloodGroup: verifyConfirmedBloodGroup,
+        notes: verifyNotes.trim(),
+        rejectionReason: verifyDecision === 'Rejected' ? verifyNotes.trim() : undefined
+      });
+
+      if (res.success) {
+        setShowVerifyModal(false);
+        setSelectedVerificationDonor(null);
+        setVerifyNotes('');
+        setVerificationActionMessage({ type: 'success', text: `Donor verification recorded: ${verifyDecision} for ${selectedVerificationDonor.name}` });
+        await fetchVerificationQueue();
+      } else {
+        setVerificationActionMessage({ type: 'error', text: res.error || 'Failed to record verification decision.' });
+      }
+    } catch {
+      setVerificationActionMessage({ type: 'error', text: 'Server error while submitting verification.' });
+    } finally {
+      setSubmittingVerification(false);
+    }
+  };
 
   const fetchCampRequests = async () => {
     setLoadingCampRequests(true);
@@ -688,6 +770,22 @@ export const CollectionsPage: React.FC = () => {
           >
             <Layers className="w-3.5 h-3.5" />
             <span>Component Fractionation</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('verification-queue')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+              activeTab === 'verification-queue'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-rose-600" />
+            <span>Donor Verification Queue</span>
+            {verificationQueue.length > 0 && (
+              <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-extrabold bg-amber-500 text-white animate-pulse">
+                {verificationQueue.length}
+              </span>
+            )}
           </button>
         </div>
       </div>
@@ -1754,6 +1852,192 @@ export const CollectionsPage: React.FC = () => {
       )}
 
       {/* ======================================================== */}
+      {/* TAB 5: CLINICAL DONOR VERIFICATION QUEUE                 */}
+      {/* ======================================================== */}
+      {activeTab === 'verification-queue' && (
+        <div className="space-y-6">
+          {/* Header Card */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center space-x-2">
+                <span className="px-2.5 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-bold uppercase tracking-wider flex items-center space-x-1">
+                  <ShieldCheck className="w-3 h-3 text-amber-700" />
+                  <span>Clinical Quality Control</span>
+                </span>
+                <span className="text-xs text-slate-400">Assigned Donors Only</span>
+              </div>
+              <h2 className="text-lg font-black text-slate-900 tracking-tight mt-1">
+                Donor Identity & Blood Group Verification Queue
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Review submitted laboratory reports and official donor cards for voluntary donors assigned to this blood bank.
+                Authorized approval sets confirmed blood group and verification audit trail.
+              </p>
+            </div>
+
+            <button
+              onClick={fetchVerificationQueue}
+              disabled={loadingVerificationQueue}
+              className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center space-x-1.5 cursor-pointer shadow-2xs transition-colors self-start sm:self-auto disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingVerificationQueue ? 'animate-spin' : ''}`} />
+              <span>Refresh Queue</span>
+            </button>
+          </div>
+
+          {/* Action toast message */}
+          {verificationActionMessage && (
+            <div className={`p-4 rounded-xl text-xs font-semibold flex items-center justify-between ${
+              verificationActionMessage.type === 'success'
+                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                : 'bg-rose-50 text-rose-800 border border-rose-200'
+            }`}>
+              <div className="flex items-center space-x-2">
+                {verificationActionMessage.type === 'success' ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                )}
+                <span>{verificationActionMessage.text}</span>
+              </div>
+              <button
+                onClick={() => setVerificationActionMessage(null)}
+                className="text-[11px] font-bold text-slate-500 hover:text-slate-800 ml-2 cursor-pointer"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
+          {/* Error message */}
+          {verificationQueueError && (
+            <div className="p-4 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl flex items-center space-x-2">
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>{verificationQueueError}</span>
+            </div>
+          )}
+
+          {/* Queue Listing */}
+          {loadingVerificationQueue ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-xs text-slate-500 flex flex-col items-center justify-center space-y-2">
+              <RefreshCw className="w-6 h-6 animate-spin text-rose-600" />
+              <span>Loading pending verification submissions...</span>
+            </div>
+          ) : verificationQueue.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
+                <CheckCircle2 className="w-6 h-6" />
+              </div>
+              <h4 className="font-bold text-sm text-slate-900">Verification Queue is Empty</h4>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                There are no pending or clarification-requested donor verification submissions assigned to this blood bank.
+                When registered donors submit proof documents routed to your facility, they will appear here in real time.
+              </p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
+              <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-800">
+                  {verificationQueue.length} Donor{verificationQueue.length !== 1 ? 's' : ''} Awaiting Review
+                </span>
+                <span className="text-[11px] text-slate-400">Oldest submissions prioritized</span>
+              </div>
+
+              <div className="divide-y divide-slate-100">
+                {verificationQueue.map((donor) => {
+                  const proofDocUrl = donor.proofDocument?.fileUrl || donor.bloodGroupProofDocUrl;
+                  const isNeedsMoreInfo = donor.verificationStatus === 'Needs More Info';
+
+                  return (
+                    <div key={donor.id} className="p-5 hover:bg-slate-50/70 transition-colors flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                      {/* Donor Profile Info */}
+                      <div className="space-y-2">
+                        <div className="flex items-center space-x-2.5">
+                          <span className="font-mono text-xs font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded">
+                            {donor.donorCode || donor.id}
+                          </span>
+                          <h3 className="font-bold text-sm text-slate-900">{donor.name}</h3>
+                          <span className="px-2 py-0.5 rounded text-[10px] font-black bg-slate-900 text-white">
+                            {donor.bloodGroup || 'O+'}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
+                            isNeedsMoreInfo
+                              ? 'bg-amber-100 text-amber-900 border-amber-300'
+                              : 'bg-amber-50 text-amber-700 border-amber-200'
+                          }`}>
+                            {donor.verificationStatus}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+                          {donor.phone && (
+                            <span className="flex items-center space-x-1">
+                              <Phone className="w-3 h-3 text-slate-400" />
+                              <span>{donor.phone}</span>
+                            </span>
+                          )}
+                          {donor.city && (
+                            <span className="flex items-center space-x-1">
+                              <MapPin className="w-3 h-3 text-slate-400" />
+                              <span>{donor.city}{donor.state ? `, ${donor.state}` : ''}</span>
+                            </span>
+                          )}
+                          {donor.weightKg && (
+                            <span>Weight: <strong className="text-slate-800">{donor.weightKg} kg</strong></span>
+                          )}
+                          <span>Submitted: <strong className="text-slate-800">{new Date(donor.verificationSubmittedAt).toLocaleDateString()}</strong></span>
+                        </div>
+
+                        {/* Document Info */}
+                        <div className="flex items-center space-x-3 text-xs bg-slate-100/70 px-3 py-1.5 rounded-xl text-slate-700">
+                          <FileText className="w-3.5 h-3.5 text-slate-500" />
+                          <span>
+                            Type: <strong className="text-slate-900">{donor.proofDocumentType || 'Lab Report'}</strong>
+                            {donor.proofDocumentNumber && ` • Reg: ${donor.proofDocumentNumber}`}
+                          </span>
+                          {proofDocUrl ? (
+                            <a
+                              href={proofDocUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-rose-600 font-bold hover:underline flex items-center space-x-1 ml-auto"
+                            >
+                              <span>View Proof Document</span>
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          ) : (
+                            <span className="text-slate-400 text-[11px] ml-auto">No file URL attached</span>
+                          )}
+                        </div>
+
+                        {/* Existing Clarification Notes if any */}
+                        {donor.verificationNotes && (
+                          <div className="p-2 bg-amber-50/90 border border-amber-200 rounded-lg text-[11px] text-amber-900">
+                            <strong>Previous Review Note:</strong> {donor.verificationNotes}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Action Button */}
+                      <div className="shrink-0 flex items-center space-x-2">
+                        <button
+                          onClick={() => handleOpenVerifyModal(donor)}
+                          className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center space-x-1.5 cursor-pointer"
+                        >
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                          <span>Review & Decide</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ======================================================== */}
       {/* MODAL: CREATE CAMP                                       */}
       {/* ======================================================== */}
       {showCreateCampModal && (
@@ -2476,6 +2760,175 @@ export const CollectionsPage: React.FC = () => {
                 >
                   <CheckCircle2 className="w-3.5 h-3.5" />
                   <span>{processingCampAction ? 'Scheduling...' : 'Confirm & Schedule Camp Drive'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* MODAL: DONOR CLINICAL VERIFICATION DECISION              */}
+      {/* ======================================================== */}
+      {showVerifyModal && selectedVerificationDonor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center space-x-2">
+                <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center font-bold">
+                  <ShieldCheck className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm">Clinical Verification Decision</h3>
+                  <p className="text-xs text-slate-500">
+                    Donor: {selectedVerificationDonor.name} ({selectedVerificationDonor.donorCode || selectedVerificationDonor.id})
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowVerifyModal(false)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Document Evidence Banner */}
+            <div className="bg-slate-50 rounded-xl p-3 text-xs space-y-1.5 border border-slate-200">
+              <div className="flex justify-between items-center">
+                <span className="font-bold text-slate-700">Submitted Proof Document:</span>
+                {(selectedVerificationDonor.proofDocument?.fileUrl || selectedVerificationDonor.bloodGroupProofDocUrl) && (
+                  <a
+                    href={selectedVerificationDonor.proofDocument?.fileUrl || selectedVerificationDonor.bloodGroupProofDocUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-rose-600 font-bold hover:underline flex items-center space-x-1"
+                  >
+                    <span>Inspect Document</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
+              </div>
+              <p className="text-slate-600">
+                Document Type: <strong>{selectedVerificationDonor.proofDocumentType || 'Lab Blood Report'}</strong>
+                {selectedVerificationDonor.proofDocumentNumber && ` • Reg: ${selectedVerificationDonor.proofDocumentNumber}`}
+              </p>
+              <p className="text-[11px] text-slate-500">
+                Declared Blood Group: <strong className="text-slate-900">{selectedVerificationDonor.bloodGroup || 'O+'}</strong> • Weight: <strong className="text-slate-900">{selectedVerificationDonor.weightKg || 'N/A'} kg</strong>
+              </p>
+            </div>
+
+            <form onSubmit={handlePerformVerification} className="space-y-4 text-xs">
+              {/* Decision Selector */}
+              <div>
+                <label className="block font-bold text-slate-800 mb-2">Select Clinical Decision *</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setVerifyDecision('Verified')}
+                    className={`py-2 px-3 rounded-xl border font-bold text-xs flex flex-col items-center justify-center space-y-1 transition-all cursor-pointer ${
+                      verifyDecision === 'Verified'
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-300 ring-2 ring-emerald-500/20'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span>Approve & Verify</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setVerifyDecision('Needs More Info')}
+                    className={`py-2 px-3 rounded-xl border font-bold text-xs flex flex-col items-center justify-center space-y-1 transition-all cursor-pointer ${
+                      verifyDecision === 'Needs More Info'
+                        ? 'bg-amber-50 text-amber-800 border-amber-300 ring-2 ring-amber-500/20'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    <AlertTriangle className="w-4 h-4 text-amber-600" />
+                    <span>Request More Info</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setVerifyDecision('Rejected')}
+                    className={`py-2 px-3 rounded-xl border font-bold text-xs flex flex-col items-center justify-center space-y-1 transition-all cursor-pointer ${
+                      verifyDecision === 'Rejected'
+                        ? 'bg-rose-50 text-rose-800 border-rose-300 ring-2 ring-rose-500/20'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Ban className="w-4 h-4 text-rose-600" />
+                    <span>Reject</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Confirmed Blood Group (when approving) */}
+              {verifyDecision === 'Verified' && (
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Confirmed Clinical Blood Group *</label>
+                  <select
+                    value={verifyConfirmedBloodGroup}
+                    onChange={(e) => setVerifyConfirmedBloodGroup(e.target.value as BloodGroup)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl bg-white font-bold text-slate-900"
+                  >
+                    {(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] as BloodGroup[]).map(bg => (
+                      <option key={bg} value={bg}>{bg}</option>
+                    ))}
+                  </select>
+                  <span className="text-[10px] text-slate-400 mt-1 block">
+                    Verify blood group matches official documentation.
+                  </span>
+                </div>
+              )}
+
+              {/* Reviewer Notes / Reason */}
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  {verifyDecision === 'Verified'
+                    ? 'Clinical Review Notes (Optional)'
+                    : verifyDecision === 'Needs More Info'
+                    ? 'Instructions to Donor (Required) *'
+                    : 'Reason for Rejection (Required) *'}
+                </label>
+                <textarea
+                  rows={3}
+                  required={verifyDecision !== 'Verified'}
+                  placeholder={
+                    verifyDecision === 'Verified'
+                      ? 'e.g. Valid lab report verified by staff phlebotomist.'
+                      : verifyDecision === 'Needs More Info'
+                      ? 'e.g. Document image is blurry or expired. Please upload a clear official hospital laboratory report.'
+                      : 'e.g. Identity name does not match submitted donor pass.'
+                  }
+                  value={verifyNotes}
+                  onChange={(e) => setVerifyNotes(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl bg-white text-slate-900"
+                />
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowVerifyModal(false)}
+                  className="px-4 py-2 border border-slate-200 rounded-xl font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingVerification}
+                  className={`px-4 py-2 rounded-xl font-bold text-white shadow-xs cursor-pointer flex items-center space-x-1.5 disabled:opacity-50 ${
+                    verifyDecision === 'Verified'
+                      ? 'bg-emerald-600 hover:bg-emerald-700'
+                      : verifyDecision === 'Needs More Info'
+                      ? 'bg-amber-600 hover:bg-amber-700'
+                      : 'bg-rose-600 hover:bg-rose-700'
+                  }`}
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>{submittingVerification ? 'Saving Decision...' : `Submit Decision: ${verifyDecision}`}</span>
                 </button>
               </div>
             </form>

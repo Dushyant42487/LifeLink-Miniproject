@@ -1,7 +1,7 @@
 export type UserRole = 'donor' | 'hospital' | 'blood_bank' | 'admin';
 
 export type BloodGroup = 'A+' | 'A-' | 'B+' | 'B-' | 'AB+' | 'AB-' | 'O+' | 'O-';
-export type BloodComponent = 'RBC' | 'Plasma' | 'Platelets';
+export type BloodComponent = 'RBC' | 'Plasma' | 'Platelets' | 'Whole Blood' | 'Cryoprecipitate';
 
 export type TestingStatus = 'Pending' | 'In Testing' | 'Passed' | 'Failed' | 'Quarantined';
 export type AvailabilityStatus = 'Available' | 'Reserved' | 'Issued' | 'Expired' | 'Quarantined';
@@ -128,8 +128,15 @@ export interface DonorProfile extends User {
     campReminders: boolean;
     eligibilityAlerts: boolean;
   };
-  bloodGroupVerificationStatus?: 'Unverified' | 'Pending Verification' | 'Verified' | 'Rejected';
-  verificationStatus?: 'Unverified' | 'Pending Verification' | 'Verified' | 'Rejected';
+  bloodGroupVerificationStatus?: 'Unverified' | 'Pending Verification' | 'Verified' | 'Rejected' | 'Needs More Info' | 'Cancelled' | 'Pending Assignment';
+  verificationStatus?: 'Unverified' | 'Pending Verification' | 'Verified' | 'Rejected' | 'Needs More Info' | 'Cancelled' | 'Pending Assignment';
+  preferredBloodBankId?: string;
+  preferredBloodBankName?: string;
+  assignedBloodBankId?: string;
+  assignedBloodBankName?: string;
+  verificationSubmittedAt?: string;
+  verificationDecisionAt?: string;
+  verificationNotes?: string;
   bloodGroupProofDocUrl?: string;
   verifiedAt?: string;
   verifiedBy?: string;
@@ -137,6 +144,15 @@ export interface DonorProfile extends User {
   rejectionReason?: string;
   travelRadiusKm?: number;
   pauseInvitations?: boolean;
+  geocodingStatus?: 'resolved' | 'failed' | 'manual';
+  assignmentAuditLog?: Array<{
+    assignedBy: string;
+    assignedByName?: string;
+    fromBankId?: string;
+    toBankId: string;
+    reason?: string;
+    timestamp: string;
+  }>;
 }
 
 export interface HospitalProfile extends User {
@@ -166,6 +182,10 @@ export interface BloodBankProfile extends User {
   emergencyPhone: string;
   latitude?: number;
   longitude?: number;
+  isActive?: boolean;
+  verificationStatus?: 'Pending Verification' | 'Verified' | 'Rejected';
+  isAuthorizedForVerification?: boolean;
+  serviceArea?: string;
 }
 
 export interface BloodUnit {
@@ -208,6 +228,40 @@ export interface TestingRecord {
   reviewedAt?: string;
 }
 
+export type RoutingStatus = 
+  | 'Pending Candidate' 
+  | 'Offers Dispatched' 
+  | 'Partially Committed' 
+  | 'Fully Committed' 
+  | 'No Candidates' 
+  | 'Manual Review Required'
+  | 'Completed';
+
+export interface BloodBankOffer {
+  id: string; // e.g. OFF-REQ-1002-bb-1
+  requestId: string;
+  bloodBankId: string;
+  bloodBankName: string;
+  distanceKm: number;
+  availableStockCount: number;
+  offeredUnits: number;
+  acceptedUnits?: number;
+  status: 'Offered' | 'Accepted' | 'Partial' | 'Declined' | 'Expired' | 'Superseded';
+  expiresAt: string;
+  respondedAt?: string;
+  declineReason?: string;
+  notes?: string;
+  createdAt: string;
+}
+
+export interface SmartRoutingConfig {
+  initialRadiusKm: number;
+  expansionStepKm: number;
+  maxRadiusKm: number;
+  maxRecipients: number;
+  responseDeadlineMinutes: Record<RequestUrgency, number>;
+}
+
 export interface BloodRequest {
   id: string; // REQ-1002
   hospitalId: string;
@@ -226,6 +280,11 @@ export interface BloodRequest {
   assignedUnitIds?: string[];
   dispatchId?: string;
   dispatchStatus?: DispatchStatus;
+  receiptConfirmation?: {
+    confirmedAt: string;
+    confirmedBy: string;
+    notes?: string;
+  };
   notes?: string;
   createdAt: string;
   updatedAt: string;
@@ -234,6 +293,18 @@ export interface BloodRequest {
     updatedAt: string;
     note: string;
     actor: string;
+  }[];
+  // Smart Automatic Routing fields
+  isAutoRouted?: boolean;
+  routingStatus?: RoutingStatus;
+  routedBankOffers?: BloodBankOffer[];
+  remainingUnitsToFulfill?: number;
+  routingSearchRadiusKm?: number;
+  routingExpansionCount?: number;
+  routingLogs?: {
+    timestamp: string;
+    action: string;
+    details: string;
   }[];
 }
 
@@ -402,11 +473,30 @@ export interface AppNotification {
   userId: string; // or 'role:donor', 'role:hospital', 'role:blood_bank'
   title: string;
   message: string;
-  type: 'emergency' | 'expiry' | 'eligibility' | 'request_update' | 'ai_alert' | 'camp';
+  type: 'emergency' | 'expiry' | 'eligibility' | 'request_update' | 'ai_alert' | 'camp' | 'verification' | 'system';
   priority: 'low' | 'medium' | 'high' | 'urgent';
   read: boolean;
   createdAt: string;
   link?: string;
+  data?: {
+    requestId?: string;
+    offerId?: string;
+    urgency?: string;
+    bloodGroup?: string;
+    component?: string;
+    quantityUnits?: number;
+    offeredUnits?: number;
+    hospitalName?: string;
+    distanceKm?: number;
+    deadlineMinutes?: number;
+    expiresAt?: string;
+    routingStatus?: string;
+    noCandidates?: boolean;
+    searchRadiusKm?: number;
+    dispatchedBanksCount?: number;
+    recipientBankCount?: number;
+    [key: string]: any;
+  };
 }
 
 export interface DemandPrediction {
