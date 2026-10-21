@@ -28,6 +28,7 @@ import { safeSupabaseSync, persistRecordDirect } from '../models/db';
 import { syncDonorAuthoritativeEligibility } from '../services/donorEligibilityService';
 import { notificationService } from '../services/notificationService';
 import { smartRoutingService } from '../services/smartRoutingService';
+import { smsService } from '../services/smsService';
 import { isValidCoordinate, parseCoordinates, calcHaversineKm } from '../utils/geo';
 
 /**
@@ -1234,6 +1235,14 @@ export const verifyDonorEligibility = async (req: AuthenticatedRequest, res: Res
       link: '/donor/dashboard'
     });
 
+    // Send confirmation SMS to donor via sms-service
+    await smsService.sendBloodBankConfirmation(
+      donor.phone,
+      donor.name,
+      bankName,
+      `Your blood group (${donor.bloodGroup}) verification has been approved. You are now cleared for donation`
+    );
+
     db.saveSnapshot();
     await persistRecordDirect('donors', donor);
 
@@ -1515,6 +1524,15 @@ export const recordBloodCollection = async (req: AuthenticatedRequest, res: Resp
   };
   db.testingRecords.unshift(newTestingRecord);
   db.saveSnapshot();
+
+  // Send confirmation SMS to donor via sms-service
+  const bankDisplayName = bb?.bloodBankName || bb?.name || 'Regional Blood Center';
+  await smsService.sendBloodBankConfirmation(
+    donor.phone,
+    donor.name,
+    bankDisplayName,
+    `Blood donation of ${vol} mL (${collType}) recorded successfully (ID: ${colId})`
+  );
 
   res.status(201).json({
     success: true,
@@ -3463,6 +3481,23 @@ export const dispatchRequisition = async (req: AuthenticatedRequest, res: Respon
     actor: req.user?.name || 'Blood Bank Dispatch'
   });
 
+  // Notify donors whose units are dispatched to hospital for patient transfusion
+  const bankName = bb?.bloodBankName || bb?.name || 'Blood Center';
+  (request.assignedUnitIds || []).forEach(async (uId) => {
+    const unit = db.bloodUnits.find(u => u.id === uId);
+    if (unit && unit.donorId) {
+      const donor = db.donors.find(d => d.id === unit.donorId);
+      if (donor && donor.phone) {
+        await smsService.sendBloodBankConfirmation(
+          donor.phone,
+          donor.name,
+          bankName,
+          `Your donated blood unit (${unit.id}, ${unit.bloodGroup} ${unit.component}) has been dispatched to ${request.hospitalName} for patient care. You saved a life today!`
+        );
+      }
+    }
+  });
+
   db.saveSnapshot();
 
   res.json({
@@ -4486,6 +4521,17 @@ export const acceptCampRequest = async (req: AuthenticatedRequest, res: Response
     priority: 'medium',
     link: '/donor/camps'
   });
+
+  // Send confirmation SMS to requesting donor via sms-service
+  const requestingDonor = db.donors.find(d => d.id === campReq.donorId);
+  if (requestingDonor) {
+    await smsService.sendBloodBankConfirmation(
+      requestingDonor.phone,
+      requestingDonor.name,
+      bankName,
+      `Your donation camp request for ${campReq.organizationName} on ${campDate} has been approved and scheduled`
+    );
+  }
 
   res.json({
     success: true,

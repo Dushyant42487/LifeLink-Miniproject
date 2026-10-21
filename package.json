@@ -4,13 +4,14 @@
   "description": "LifeLink - Intelligent Blood Donation, Inventory Management, and Demand Prediction Platform",
   "private": true,
   "scripts": {
-    "install:all": "npm install && npm --prefix backend install && npm --prefix frontend install && npm --prefix chatboot install",
+    "install:all": "npm install && npm --prefix backend install && npm --prefix frontend install && npm --prefix chatboot install && npm --prefix sms-service install",
     "gateway": "node gateway.js",
     "dev:frontend": "npm --prefix frontend run dev",
     "dev:backend": "npm --prefix backend run dev",
     "dev:ml": "python ml-service/main.py",
     "dev:chatbot": "npm --prefix chatboot start",
-    "dev": "concurrently -k -p \"[{name}]\" -n \"GATEWAY,VITE,BACKEND,ML,CHATBOT\" -c \"magenta.bold,cyan.bold,green.bold,yellow.bold,blue.bold\" \"npm run gateway\" \"npm run dev:frontend\" \"npm run dev:backend\" \"npm run dev:ml\" \"npm run dev:chatbot\"",
+    "dev:sms": "npm --prefix sms-service start",
+    "dev": "concurrently -k -p \"[{name}]\" -n \"GATEWAY,VITE,BACKEND,ML,CHATBOT,SMS\" -c \"magenta.bold,cyan.bold,green.bold,yellow.bold,blue.bold,red.bold\" \"npm run gateway\" \"npm run dev:frontend\" \"npm run dev:backend\" \"npm run dev:ml\" \"npm run dev:chatbot\" \"npm run dev:sms\"",
     "build:frontend": "npm --prefix frontend run build",
     "build:backend": "npm --prefix backend run build"
   },
