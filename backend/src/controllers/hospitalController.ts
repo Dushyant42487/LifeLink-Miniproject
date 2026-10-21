@@ -418,7 +418,70 @@ export const createBloodRequest = async (req: AuthenticatedRequest, res: Respons
 
   let routingMessage = 'Blood request submitted successfully';
 
-  if (!targetUnitId) {
+  if (bb && !targetUnitId) {
+    // Manual Direct Facility Requisition: Dispatch direct offer specifically to selected blood bank
+    const deadlineMinutes = (urgency === 'Emergency' ? 15 : urgency === 'Urgent' ? 60 : 1440);
+    const expiresAt = new Date(Date.now() + deadlineMinutes * 60 * 1000).toISOString();
+    const offerId = `OFF-${newRequest.id}-${bb.id}-${Date.now().toString().slice(-4)}`;
+
+    let distanceKm = 0;
+    if (isValidCoordinate(hosp.latitude, hosp.longitude) && isValidCoordinate(bb.latitude, bb.longitude)) {
+      distanceKm = Math.round(calcHaversineKm(hosp.latitude!, hosp.longitude!, bb.latitude!, bb.longitude!) * 10) / 10;
+    }
+
+    const availableStockCount = db.bloodUnits.filter(u => 
+      u.bloodBankId === bb.id && 
+      u.bloodGroup === bloodGroup && 
+      u.component === canonicalComponent && 
+      u.availability === 'Available' && 
+      u.testingStatus === 'Passed'
+    ).length;
+
+    const directOffer = {
+      id: offerId,
+      requestId: newRequest.id,
+      bloodBankId: bb.id,
+      bloodBankName: bb.bloodBankName || bb.name,
+      distanceKm,
+      availableStockCount,
+      offeredUnits: Number(quantityUnits),
+      status: 'Offered' as const,
+      expiresAt,
+      createdAt: now
+    };
+
+    newRequest.isAutoRouted = false;
+    newRequest.routedBankOffers = [directOffer];
+    newRequest.routingStatus = 'Offers Dispatched';
+    newRequest.bloodBankId = bb.id;
+    newRequest.bloodBankName = bb.bloodBankName || bb.name;
+    routingMessage = `Requisition created (${reqId}) and dispatched directly to ${bb.bloodBankName || bb.name}.`;
+
+    const notifPriority = urgency === 'Emergency' ? 'urgent' : urgency === 'Urgent' ? 'high' : 'medium';
+    const notifType = urgency === 'Emergency' ? 'emergency' : 'request_update';
+
+    await notificationService.dispatchNotification({
+      userId: bb.id,
+      title: `[${(urgency || 'ROUTINE').toUpperCase()} REQUISITION] ${bloodGroup} ${canonicalComponent}`,
+      message: `${hospName} submitted a direct ${urgency || 'Routine'} requisition for ${quantityUnits} unit(s).`,
+      type: notifType,
+      priority: notifPriority,
+      link: `/blood-bank/requests?tab=offers&requestId=${newRequest.id}`,
+      data: {
+        requestId: newRequest.id,
+        offerId: directOffer.id,
+        urgency: urgency || 'Routine',
+        bloodGroup,
+        component: canonicalComponent,
+        quantityUnits: Number(quantityUnits),
+        offeredUnits: Number(quantityUnits),
+        hospitalName: hospName,
+        distanceKm,
+        deadlineMinutes,
+        expiresAt
+      }
+    });
+  } else if (!targetUnitId) {
     // Phase 2: Automatic smart blood bank routing
     const routingResult = await smartRoutingService.dispatchRoutingOffers(newRequest);
     if (routingResult.noCandidates) {
@@ -427,15 +490,22 @@ export const createBloodRequest = async (req: AuthenticatedRequest, res: Respons
       routingMessage = `Requisition created (${reqId}). Smart routing dispatched offers to ${routingResult.offersCreated.length} nearby eligible blood bank(s) within ${routingResult.searchRadiusKm} km.`;
     }
   } else {
-    // If specific target unit requested and emergency, notify target bank
-    if (urgency === 'Emergency' && targetUnit) {
+    // If specific target unit requested and emergency or urgent, notify target bank
+    if (targetUnit && (urgency === 'Emergency' || urgency === 'Urgent')) {
       await notificationService.dispatchNotification({
         userId: targetUnit.bloodBankId,
-        title: `EMERGENCY BLOOD REQUEST: ${bloodGroup} ${component}`,
-        message: `${hospName} created an Emergency request for unit ${targetUnit.id} (${bloodGroup} ${component}).`,
-        type: 'emergency',
-        priority: 'urgent',
-        link: '/blood-bank/requests'
+        title: `${urgency.toUpperCase()} BLOOD REQUEST: ${bloodGroup} ${component}`,
+        message: `${hospName} created an ${urgency} request for unit ${targetUnit.id} (${bloodGroup} ${component}).`,
+        type: urgency === 'Emergency' ? 'emergency' : 'request_update',
+        priority: urgency === 'Emergency' ? 'urgent' : 'high',
+        link: '/blood-bank/requests',
+        data: {
+          requestId: newRequest.id,
+          unitId: targetUnit.id,
+          urgency,
+          bloodGroup,
+          component
+        }
       });
     }
   }

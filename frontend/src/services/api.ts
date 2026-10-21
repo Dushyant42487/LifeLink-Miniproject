@@ -221,6 +221,11 @@ export const hospitalApi = {
 
 // Blood Bank API Endpoints (Phase 5C Cold Storage & Phase 5D Fulfillment)
 export const bloodBankApi = {
+  // Organization Profile & Coordinates
+  getProfile: () => apiFetch('/blood-bank/profile'),
+  updateProfile: (data: any) => 
+    apiFetch('/blood-bank/profile', { method: 'PUT', body: JSON.stringify(data) }),
+
   // Cold Storage
   getColdStorageEquipment: () => apiFetch('/blood-bank/cold-storage/equipment'),
   getColdStorageEquipmentById: (id: string) => apiFetch(`/blood-bank/cold-storage/equipment/${id}`),

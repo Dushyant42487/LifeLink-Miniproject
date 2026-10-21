@@ -1,6 +1,7 @@
 import { supabase, safeSupabaseSync } from '../models/db';
 import { Request, Response } from 'express';
 import { db } from '../models/store';
+import { isValidCoordinate } from '../utils/geo';
 
 const normalizeBloodGroup = (bg?: any): string | undefined => {
   if (!bg || bg === 'all') return undefined;
@@ -132,29 +133,60 @@ export const getNotifications = async (req: Request, res: Response) => {
 export const getPublicLocations = async (req: Request, res: Response) => {
   await safeSupabaseSync();
 
-  const bloodBanks = db.bloodBanks.map(b => ({
-    id: b.id,
-    name: b.name || b.bloodBankName,
-    address: b.address,
-    city: b.city,
-    state: b.state,
-    lat: b.latitude,
-    lng: b.longitude,
-    phone: b.phone,
-    type: 'blood_bank'
-  }));
+  // Deduplicate and filter active blood banks
+  const seenBankKeys = new Set<string>();
+  const bloodBanks: any[] = [];
 
-  const hospitals = db.hospitals.map(h => ({
-    id: h.id,
-    name: h.name,
-    address: h.address,
-    city: h.city,
-    state: h.state,
-    lat: h.latitude,
-    lng: h.longitude,
-    phone: h.phone,
-    type: 'hospital'
-  }));
+  for (const b of db.bloodBanks) {
+    if (!b.id || b.isActive === false || b.verificationStatus === 'Rejected') continue;
+    const name = b.name || b.bloodBankName;
+    if (!name) continue;
+    const dedupeKey = `${b.id}-${name.trim().toLowerCase()}`;
+    if (seenBankKeys.has(dedupeKey)) continue;
+    seenBankKeys.add(dedupeKey);
+
+    bloodBanks.push({
+      id: b.id,
+      name,
+      bloodBankName: b.bloodBankName || b.name,
+      address: b.address,
+      city: b.city,
+      state: b.state,
+      lat: b.latitude,
+      lng: b.longitude,
+      phone: b.phone,
+      emergencyPhone: b.emergencyPhone,
+      hasValidLocation: isValidCoordinate(b.latitude, b.longitude),
+      type: 'blood_bank'
+    });
+  }
+
+  const seenHospKeys = new Set<string>();
+  const hospitals: any[] = [];
+
+  for (const h of db.hospitals) {
+    if (!h.id) continue;
+    const name = h.hospitalName || h.name;
+    if (!name) continue;
+    const dedupeKey = `${h.id}-${name.trim().toLowerCase()}`;
+    if (seenHospKeys.has(dedupeKey)) continue;
+    seenHospKeys.add(dedupeKey);
+
+    hospitals.push({
+      id: h.id,
+      name,
+      hospitalName: h.hospitalName || h.name,
+      address: h.address,
+      city: h.city,
+      state: h.state,
+      lat: h.latitude,
+      lng: h.longitude,
+      phone: h.phone,
+      hasValidLocation: isValidCoordinate(h.latitude, h.longitude),
+      type: 'hospital'
+    });
+  }
 
   res.json({ success: true, bloodBanks, hospitals });
 };
+

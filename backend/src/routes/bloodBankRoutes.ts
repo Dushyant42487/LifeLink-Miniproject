@@ -52,7 +52,9 @@ import {
   getEligibleBloodBankDirectory,
   getBloodBankOffers,
   respondToBloodBankOffer,
-  dispatchRequisition
+  dispatchRequisition,
+  getBloodBankProfile,
+  updateBloodBankProfile
 } from '../controllers/bloodBankController';
 import { authenticateToken, requireRole } from '../middleware/auth';
 
@@ -63,6 +65,10 @@ router.get('/eligible-directory', authenticateToken, getEligibleBloodBankDirecto
 
 router.use(authenticateToken);
 router.use(requireRole(['blood_bank']));
+
+// Organization Profile & Location Coordinates
+router.get('/profile', getBloodBankProfile);
+router.put('/profile', updateBloodBankProfile);
 
 router.get('/dashboard', getBloodBankDashboard);
 router.get('/inventory', getInventory);

@@ -182,10 +182,12 @@ export interface BloodBankProfile extends User {
   emergencyPhone: string;
   latitude?: number;
   longitude?: number;
+  country?: string;
   isActive?: boolean;
   verificationStatus?: 'Pending Verification' | 'Verified' | 'Rejected';
   isAuthorizedForVerification?: boolean;
   serviceArea?: string;
+  geocodingStatus?: 'resolved' | 'failed' | 'manual';
 }
 
 export interface BloodUnit {
@@ -579,6 +581,8 @@ export interface CampRequest {
   bloodBankId?: string;
   bloodBankName?: string;
   scheduledCampId?: string;
+  latitude?: number;
+  longitude?: number;
 
   // Status
   status: CampRequestStatus;

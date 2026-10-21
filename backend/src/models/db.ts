@@ -89,9 +89,14 @@ export function sanitizeRecord(tableName: string, record: any): any {
     if (sanitized.totalVolumeMl === undefined) sanitized.totalVolumeMl = 0;
   }
 
+  // Do not silently inject fake coordinates for blood banks or hospitals; preserve genuine undefined status
   if (tableName === 'blood_banks' || tableName === 'hospitals') {
-    if (sanitized.latitude === undefined || sanitized.latitude === null) sanitized.latitude = 40.7128;
-    if (sanitized.longitude === undefined || sanitized.longitude === null) sanitized.longitude = -74.0060;
+    if (sanitized.latitude !== undefined && sanitized.latitude !== null) {
+      sanitized.latitude = Number(sanitized.latitude);
+    }
+    if (sanitized.longitude !== undefined && sanitized.longitude !== null) {
+      sanitized.longitude = Number(sanitized.longitude);
+    }
   }
 
   if (!sanitized.createdAt) {

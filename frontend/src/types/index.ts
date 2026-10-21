@@ -164,6 +164,26 @@ export interface HospitalProfile extends User {
   longitude?: number;
 }
 
+export interface BloodBankProfile extends User {
+  role: 'blood_bank';
+  bloodBankName: string;
+  registrationId: string;
+  contactPerson?: string;
+  emergencyPhone?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  country?: string;
+  latitude?: number;
+  longitude?: number;
+  isActive?: boolean;
+  verificationStatus?: 'Pending Verification' | 'Verified' | 'Rejected';
+  isAuthorizedForVerification?: boolean;
+  serviceArea?: string;
+  geocodingStatus?: 'resolved' | 'failed' | 'manual';
+}
+
 export interface NearbyHospital {
   id: string;
   name: string;
@@ -484,6 +504,8 @@ export interface CampRequest {
   bloodBankId?: string;
   bloodBankName?: string;
   scheduledCampId?: string;
+  latitude?: number;
+  longitude?: number;
 
   status: CampRequestStatus;
   statusNote?: string;

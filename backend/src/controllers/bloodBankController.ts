@@ -103,7 +103,7 @@ export const getBloodBankDashboard = async (req: AuthenticatedRequest, res: Resp
   const reservedUnits = bankUnits.filter(u => u.availability === 'Reserved').length;
 
   const pendingRequests = db.bloodRequests.filter(r => 
-    r.bloodBankId === bankId && 
+    (r.bloodBankId === bankId || (r.routedBankOffers && r.routedBankOffers.some(o => o.bloodBankId === bankId && o.status === 'Offered'))) && 
     (r.status === 'Pending' || r.status === 'Sample Submitted' || r.status === 'Under Review' || r.status === 'Verified')
   ).length;
 
@@ -112,7 +112,8 @@ export const getBloodBankDashboard = async (req: AuthenticatedRequest, res: Resp
   ).length;
 
   const emergencyRequests = db.bloodRequests.filter(r => 
-    r.bloodBankId === bankId && r.urgency === 'Emergency' && r.status !== 'Fulfilled' && r.status !== 'Cancelled'
+    (r.bloodBankId === bankId || (r.routedBankOffers && r.routedBankOffers.some(o => o.bloodBankId === bankId && o.status === 'Offered'))) && 
+    r.urgency === 'Emergency' && r.status !== 'Fulfilled' && r.status !== 'Cancelled'
   ).length;
 
   // Group summary matrix strictly scoped to this bank
@@ -1189,8 +1190,8 @@ export const verifyDonorEligibility = async (req: AuthenticatedRequest, res: Res
     return res.status(404).json({ success: false, error: `Donor ${id} not found.` });
   }
 
-  // Tenant authorization: Unrelated blood bank cannot review if explicitly assigned to another bank
-  if (donor.assignedBloodBankId && donor.assignedBloodBankId !== bankId && req.user?.role !== 'admin') {
+  // Tenant authorization: Unrelated blood bank cannot review if explicitly assigned to another bank by donor preference
+  if (donor.preferredBloodBankId && donor.preferredBloodBankId !== bankId && req.user?.role !== 'admin') {
     return res.status(403).json({
       success: false,
       error: `Access denied. Donor ${donor.name} is assigned to ${donor.assignedBloodBankName || donor.assignedBloodBankId} for verification.`
@@ -1672,6 +1673,17 @@ export const createBloodBankCamp = async (req: AuthenticatedRequest, res: Respon
     return res.status(400).json({ success: false, error: 'End date cannot precede start date.' });
   }
 
+  let campLat: number | undefined;
+  let campLng: number | undefined;
+  if (req.body.latitude !== undefined && req.body.longitude !== undefined && req.body.latitude !== null && req.body.longitude !== null && req.body.latitude !== '' && req.body.longitude !== '') {
+    const coordParsed = parseCoordinates(req.body.latitude, req.body.longitude);
+    if (coordParsed.error) {
+      return res.status(400).json({ success: false, error: coordParsed.error });
+    }
+    campLat = coordParsed.lat;
+    campLng = coordParsed.lng;
+  }
+
   const campId = `CAMP-${Date.now()}`;
   const campCity = city || bb?.city || '';
   const newCamp: DonationCamp = {
@@ -1691,6 +1703,8 @@ export const createBloodBankCamp = async (req: AuthenticatedRequest, res: Respon
     contactPhone,
     description: description || 'Community voluntary blood donation mobilization drive.',
     isUrgent: Boolean(isUrgent),
+    latitude: campLat,
+    longitude: campLng,
     status: 'Active',
     isDevFixture: false
   };
@@ -1727,7 +1741,21 @@ export const updateBloodBankCamp = async (req: AuthenticatedRequest, res: Respon
     return res.status(400).json({ success: false, error: `Cannot modify a camp with status '${camp.status}'.` });
   }
 
-  const { title, location, city, address, startDate, endDate, timeSlot, targetUnits, contactPhone, description, isUrgent, status } = req.body;
+  const { title, location, city, address, startDate, endDate, timeSlot, targetUnits, contactPhone, description, isUrgent, status, latitude, longitude } = req.body;
+
+  if (latitude !== undefined || longitude !== undefined) {
+    if ((latitude === null || latitude === '') && (longitude === null || longitude === '')) {
+      camp.latitude = undefined;
+      camp.longitude = undefined;
+    } else {
+      const coordParsed = parseCoordinates(latitude, longitude);
+      if (coordParsed.error) {
+        return res.status(400).json({ success: false, error: coordParsed.error });
+      }
+      camp.latitude = coordParsed.lat;
+      camp.longitude = coordParsed.lng;
+    }
+  }
 
   if (targetUnits !== undefined) {
     const target = Number(targetUnits);
@@ -2844,7 +2872,7 @@ export const allocateUnitsToRequest = async (req: AuthenticatedRequest, res: Res
   if (unitIds.length > availableToAllocate) {
     return res.status(400).json({
       success: false,
-      error: `Allocation quantity (${unitIds.length}) exceeds remaining available capacity (${availableToAllocate} unit(s)).`
+      error: `Allocation quantity (${unitIds.length}) exceeds remaining required quantity (${availableToAllocate} unit(s)).`
     });
   }
 
@@ -4448,6 +4476,16 @@ export const acceptCampRequest = async (req: AuthenticatedRequest, res: Response
   const campDate = scheduledDate || campReq.proposedDate;
   const campTime = timeSlot || campReq.preferredTimeSlot || '09:00 AM - 05:00 PM';
 
+  let campLat: number | undefined = campReq.latitude;
+  let campLng: number | undefined = campReq.longitude;
+  if (req.body.latitude !== undefined && req.body.longitude !== undefined && req.body.latitude !== null && req.body.longitude !== null && req.body.latitude !== '' && req.body.longitude !== '') {
+    const parsed = parseCoordinates(req.body.latitude, req.body.longitude);
+    if (!parsed.error) {
+      campLat = parsed.lat;
+      campLng = parsed.lng;
+    }
+  }
+
   // Create scheduled donation camp record
   const newCamp: DonationCamp = {
     id: `CAMP-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
@@ -4464,6 +4502,8 @@ export const acceptCampRequest = async (req: AuthenticatedRequest, res: Response
     registeredCount: 0,
     contactPhone: campReq.organizerPhone,
     description: `Community donation drive organized in partnership with ${campReq.organizationName} (${campReq.organizerName}). Facilities: ${campReq.availableFacilities || 'Standard indoor venue'}.${notes ? ` Coordination note: ${notes}` : ''}`,
+    latitude: campLat,
+    longitude: campLng,
     status: 'Planned'
   };
 
@@ -4533,5 +4573,95 @@ export const rejectCampRequest = async (req: AuthenticatedRequest, res: Response
     campRequest: campReq
   });
 };
+
+/**
+ * Get Authenticated Blood Bank Organization Profile
+ */
+export const getBloodBankProfile = async (req: AuthenticatedRequest, res: Response) => {
+  await safeSupabaseSync();
+
+  const bb = resolveBloodBank(req);
+  if (!bb) {
+    return res.status(404).json({ success: false, error: 'Blood bank profile not found.' });
+  }
+
+  const { passwordHash, ...data } = bb;
+  res.json({ success: true, profile: data });
+};
+
+/**
+ * Update Blood Bank Organization Profile & Persisted Coordinates
+ */
+export const updateBloodBankProfile = async (req: AuthenticatedRequest, res: Response) => {
+  await safeSupabaseSync();
+
+  const bb = resolveBloodBank(req);
+  if (!bb) {
+    return res.status(404).json({ success: false, error: 'Blood bank profile not found.' });
+  }
+
+  const {
+    bloodBankName,
+    contactPerson,
+    phone,
+    emergencyPhone,
+    address,
+    city,
+    state,
+    postalCode,
+    country,
+    latitude,
+    longitude,
+    serviceArea,
+    geocodingStatus
+  } = req.body;
+
+  if (bloodBankName !== undefined && !String(bloodBankName).trim()) {
+    return res.status(400).json({ success: false, error: 'Blood bank name cannot be blank.' });
+  }
+
+  if (latitude !== undefined || longitude !== undefined) {
+    if ((latitude === null || latitude === '') && (longitude === null || longitude === '')) {
+      bb.latitude = undefined;
+      bb.longitude = undefined;
+      bb.geocodingStatus = 'failed';
+    } else {
+      const coordParsed = parseCoordinates(latitude, longitude);
+      if (coordParsed.error) {
+        return res.status(400).json({ success: false, error: coordParsed.error });
+      }
+      bb.latitude = coordParsed.lat;
+      bb.longitude = coordParsed.lng;
+      bb.geocodingStatus = (geocodingStatus === 'manual' || geocodingStatus === 'resolved') ? geocodingStatus : 'resolved';
+    }
+  }
+
+  if (bloodBankName !== undefined) {
+    bb.bloodBankName = String(bloodBankName).trim();
+    bb.name = String(bloodBankName).trim();
+  }
+  if (contactPerson !== undefined) bb.contactPerson = String(contactPerson).trim();
+  if (phone !== undefined) bb.phone = String(phone).trim();
+  if (emergencyPhone !== undefined) bb.emergencyPhone = String(emergencyPhone).trim();
+  if (address !== undefined) bb.address = String(address).trim();
+  if (city !== undefined) bb.city = String(city).trim();
+  if (state !== undefined) bb.state = String(state).trim();
+  if (postalCode !== undefined) bb.postalCode = String(postalCode).trim();
+  if (country !== undefined) bb.country = String(country).trim();
+  if (serviceArea !== undefined) bb.serviceArea = String(serviceArea).trim();
+  if (geocodingStatus !== undefined && !bb.latitude) {
+    bb.geocodingStatus = geocodingStatus;
+  }
+
+  db.saveSnapshot();
+
+  const { passwordHash, ...data } = bb;
+  res.json({
+    success: true,
+    message: 'Blood bank organization profile and location coordinates updated successfully.',
+    profile: data
+  });
+};
+
 
 

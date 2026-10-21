@@ -287,6 +287,16 @@ export const createCampRequest = async (req: AuthenticatedRequest, res: Response
     }
   }
 
+  let campLat: number | undefined;
+  let campLng: number | undefined;
+  if (req.body.latitude !== undefined && req.body.longitude !== undefined && req.body.latitude !== null && req.body.longitude !== null && req.body.latitude !== '' && req.body.longitude !== '') {
+    const parsed = parseCoordinates(req.body.latitude, req.body.longitude);
+    if (!parsed.error) {
+      campLat = parsed.lat;
+      campLng = parsed.lng;
+    }
+  }
+
   const newRequest = {
     id: `CAMP-REQ-${Math.floor(1000 + Math.random() * 9000)}`,
     donorId: donor.id,
@@ -313,6 +323,8 @@ export const createCampRequest = async (req: AuthenticatedRequest, res: Response
     agreedToTerms: Boolean(agreedToTerms),
     bloodBankId: assignedBankId,
     bloodBankName: assignedBankName,
+    latitude: campLat,
+    longitude: campLng,
     status: 'Submitted' as const,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()

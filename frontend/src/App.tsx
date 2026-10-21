@@ -43,6 +43,7 @@ import { ReservationsPage } from './pages/bloodbank/ReservationsPage';
 import { AIInsightsPage } from './pages/bloodbank/AIInsightsPage';
 import { ReportsPage } from './pages/bloodbank/ReportsPage';
 import { ColdStoragePage } from './pages/bloodbank/ColdStoragePage';
+import { BloodBankProfilePage } from './pages/bloodbank/BloodBankProfilePage';
 import { UserRole } from './types';
 
 // Role-Protected Route Wrapper
