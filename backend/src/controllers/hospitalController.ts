@@ -6,6 +6,7 @@ import { BloodRequest, PatientSample, RequestMessage, BloodGroup, BloodComponent
 import { isValidCoordinate, parseCoordinates, calcHaversineKm } from '../utils/geo';
 import { notificationService } from '../services/notificationService';
 import { smartRoutingService } from '../services/smartRoutingService';
+import { smsService } from '../services/smsService';
 export { calcHaversineKm };
 
 // Authoritative calculation of reserved units strictly scoped to active hospital requisitions
@@ -507,6 +508,19 @@ export const createBloodRequest = async (req: AuthenticatedRequest, res: Respons
           component
         }
       });
+    }
+
+    // Send confirmation SMS to the donor of the target unit informing them their donated blood is allocated to help a patient
+    if (targetUnit && targetUnit.donorId) {
+      const donor = db.donors.find(d => d.id === targetUnit.donorId);
+      if (donor && donor.phone) {
+        await smsService.sendHospitalConfirmation(
+          donor.phone,
+          donor.name,
+          hospName,
+          `Your donated unit of ${bloodGroup} ${component} (Unit: ${targetUnit.id}) has been requested to save a life in the ${department || 'General'} department`
+        );
+      }
     }
   }
 

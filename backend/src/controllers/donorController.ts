@@ -6,6 +6,7 @@ import { EmergencyResponse } from '../models/types';
 import { isValidCoordinate, parseCoordinates, calcHaversineKm } from '../utils/geo';
 import { syncDonorAuthoritativeEligibility } from '../services/donorEligibilityService';
 import { notificationService } from '../services/notificationService';
+import { smsService } from '../services/smsService';
 
 export const getDonorProfile = async (req: AuthenticatedRequest, res: Response) => {
   await safeSupabaseSync();
@@ -233,6 +234,15 @@ export const respondToEmergencyAlert = async (req: AuthenticatedRequest, res: Re
   alert.responsesCount = (alert.responsesCount || 0) + 1;
   db.saveSnapshot();
 
+  // Send confirmation SMS to donor via sms-service on behalf of the hospital/blood bank
+  const facilityName = alert.bloodBankName || alert.hospitalName || 'Emergency Blood Operations';
+  await smsService.sendBloodBankConfirmation(
+    donor.phone,
+    donor.name,
+    facilityName,
+    `Your commitment to respond for emergency blood alert (${alert.bloodGroup} ${alert.component}) has been recorded. Please head to ${facilityName}`
+  );
+
   res.json({
     success: true,
     message: 'Thank you! Your willingness to donate has been transmitted to the blood bank staff.',
@@ -425,6 +435,15 @@ export const registerForCamp = async (req: AuthenticatedRequest, res: Response) 
     priority: 'medium',
     link: '/donor/camps'
   });
+
+  // Send confirmation SMS to donor via sms-service
+  const organizerName = camp.organizer || 'LifeLink Blood Center';
+  await smsService.sendBloodBankConfirmation(
+    donor.phone,
+    donor.name,
+    organizerName,
+    `Your registration for donation camp "${camp.title}" on ${camp.startDate} at ${camp.location} is confirmed`
+  );
 
   res.json({
     success: true,
