@@ -8,6 +8,16 @@ app (Local Server mode) running on your phone.
 ```bash
 npm install
 cp .env.example .env
+.env=
+# Port this SMS microservice listens on
+PORT=7001
+
+# SMS Gateway for Android — Local Server mode (shown in the app's Home/Local Server tab)
+GATEWAY_HOST=10.1.....11
+GATEWAY_PORT=8080
+GATEWAY_USER=sms
+GATEWAY_PASS=5oaPF
+
 # edit .env with your phone's current local IP, port, and Local Server credentials
 ```
 
@@ -26,7 +36,7 @@ Service listens on `PORT` from `.env` (default `7001`).
 **Request body**
 ```json
 {
-  "phoneNumber": "8888608739",
+  "phoneNumber": "88808739",
   "message": "Hello from my web app"
 }
 ```
