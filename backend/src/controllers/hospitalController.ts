@@ -1,4 +1,4 @@
-import { safeSupabaseSync } from '../models/db';
+import { safeSupabaseSync, persistRecordDirect } from '../models/db';
 import { Response } from 'express';
 import { db } from '../models/store';
 import { AuthenticatedRequest } from '../middleware/auth';
@@ -242,7 +242,8 @@ export const createBloodRequest = async (req: AuthenticatedRequest, res: Respons
 
   const validComponents = [
     'RBC', 'Plasma', 'Platelets', 'PRBC', 'Cryo', 'Cryoprecipitate', 
-    'Whole Blood', 'Red Blood Cells', 'Red Blood Cells (PRBC)'
+    'Whole Blood', 'Red Blood Cells', 'Red Blood Cells (PRBC)',
+    'Packed Red Blood Cells', 'Platelet Concentrate'
   ];
   if (!validComponents.includes(component)) {
     return res.status(400).json({ success: false, error: `Invalid blood component: ${component}` });
@@ -347,15 +348,15 @@ export const createBloodRequest = async (req: AuthenticatedRequest, res: Respons
     normalizedPatientRef = `PAT-${Math.floor(8000 + Math.random() * 2000)}`;
   }
 
-  // Prevent accidental rapid duplicate submissions within 5 seconds for same hospital, patient, bloodGroup, component, and quantity
+  // Prevent accidental rapid duplicate submissions within 15 seconds for same hospital, patient, bloodGroup, component, and quantity
   const nowMs = Date.now();
   const recentDuplicate = db.bloodRequests.find(r =>
     r.hospitalId === hosp.id &&
     r.patientReferenceId.trim().toLowerCase() === normalizedPatientRef.trim().toLowerCase() &&
     r.bloodGroup === bloodGroup &&
-    r.component === component &&
+    (r.component === canonicalComponent || r.component === component) &&
     r.quantityUnits === qty &&
-    (nowMs - new Date(r.createdAt).getTime()) < 5000
+    (nowMs - new Date(r.createdAt).getTime()) < 15000
   );
 
   if (recentDuplicate) {
@@ -611,7 +612,38 @@ export const getHospitalRequests = async (req: AuthenticatedRequest, res: Respon
     requests = db.bloodRequests;
   }
 
-  res.json({ success: true, count: requests.length, requests });
+  const enriched = requests.map(r => {
+    const linkedDispatch = db.bloodDispatches.find(d => d.requestId === r.id);
+    const linkedSamples = db.patientSamples.filter(s => s.requestId === r.id);
+    const hosp = db.hospitals.find(h => h.id === r.hospitalId);
+    const bb = db.bloodBanks.find(b => b.id === r.bloodBankId);
+
+    const hospitalCoordinates = (hosp && isValidCoordinate(hosp.latitude, hosp.longitude)) ? {
+      lat: hosp.latitude,
+      lng: hosp.longitude,
+      hospitalName: hosp.hospitalName || hosp.name,
+      address: hosp.address,
+      city: hosp.city
+    } : null;
+
+    const bankCoordinates = (bb && isValidCoordinate(bb.latitude, bb.longitude)) ? {
+      lat: bb.latitude,
+      lng: bb.longitude,
+      bloodBankName: bb.bloodBankName || bb.name,
+      address: bb.address,
+      city: bb.city
+    } : null;
+
+    return {
+      ...r,
+      linkedDispatch: linkedDispatch || null,
+      linkedSamples,
+      hospitalCoordinates,
+      bankCoordinates
+    };
+  });
+
+  res.json({ success: true, count: enriched.length, requests: enriched });
 };
 
 export const getPatientSamples = async (req: AuthenticatedRequest, res: Response) => {
@@ -791,67 +823,145 @@ export const getHospitalLogistics = async (req: AuthenticatedRequest, res: Respo
     hospitalName: req.user?.name || 'Hospital',
     address: (req.user as any)?.address || '',
     city: (req.user as any)?.city || '',
-    latitude: (req.user as any)?.latitude || 0,
-    longitude: (req.user as any)?.longitude || 0
+    latitude: (req.user as any)?.latitude,
+    longitude: (req.user as any)?.longitude
   };
 
-  const hospLat = (hosp as any).latitude || 0;
-  const hospLng = (hosp as any).longitude || 0;
+  const hospLat = (hosp as any).latitude;
+  const hospLng = (hosp as any).longitude;
+  const hasValidHospCoord = isValidCoordinate(hospLat, hospLng);
 
   // Connected blood banks with verified coordinates and live inventory summary
-  const bloodBanks = db.bloodBanks.map(bb => {
-    const availableUnits = db.bloodUnits.filter(u => 
-      u.bloodBankId === bb.id && 
-      u.availability === 'Available' && 
-      u.testingStatus === 'Passed'
-    );
-    const distanceKm = isValidCoordinate(hospLat, hospLng) && isValidCoordinate(bb.latitude, bb.longitude)
-      ? calcHaversineKm(hospLat, hospLng, bb.latitude!, bb.longitude!)
-      : null;
+  const bloodBanks = db.bloodBanks
+    .filter(bb => bb.isActive !== false && bb.verificationStatus !== 'Rejected')
+    .map(bb => {
+      const availableUnits = db.bloodUnits.filter(u => 
+        u.bloodBankId === bb.id && 
+        u.availability === 'Available' && 
+        u.testingStatus === 'Passed'
+      );
+      const hasValidBbCoord = isValidCoordinate(bb.latitude, bb.longitude);
+      const distanceKm = hasValidHospCoord && hasValidBbCoord
+        ? Math.round(calcHaversineKm(hospLat!, hospLng!, bb.latitude!, bb.longitude!) * 10) / 10
+        : null;
 
-    return {
-      bloodBankId: bb.id,
-      bloodBankName: bb.bloodBankName,
-      address: `${bb.address}, ${bb.city}`,
-      emergencyPhone: bb.emergencyPhone,
-      latitude: bb.latitude,
-      longitude: bb.longitude,
-      distanceKm,
-      inventorySummary: {
-        totalAvailable: availableUnits.length,
-        rbcCount: availableUnits.filter(u => u.component === 'RBC').length,
-        plasmaCount: availableUnits.filter(u => u.component === 'Plasma').length,
-        plateletsCount: availableUnits.filter(u => u.component === 'Platelets').length
-      }
-    };
-  });
+      return {
+        bloodBankId: bb.id,
+        bloodBankName: bb.bloodBankName || bb.name,
+        address: `${bb.address || ''}${bb.city ? `, ${bb.city}` : ''}`,
+        emergencyPhone: bb.emergencyPhone || bb.phone || '',
+        latitude: bb.latitude,
+        longitude: bb.longitude,
+        hasValidCoordinates: hasValidBbCoord,
+        distanceKm,
+        inventorySummary: {
+          totalAvailable: availableUnits.length,
+          rbcCount: availableUnits.filter(u => u.component === 'RBC').length,
+          plasmaCount: availableUnits.filter(u => u.component === 'Plasma').length,
+          plateletsCount: availableUnits.filter(u => u.component === 'Platelets').length
+        }
+      };
+    });
 
-  // Active dispatches strictly scoped to authenticated hospital
-  const myRequests = db.bloodRequests.filter(r => r.hospitalId === hospitalId);
-  const activeDispatches = myRequests.filter(r => 
-    r.status !== 'Fulfilled' && r.status !== 'Cancelled' && r.status !== 'Rejected'
-  ).map(r => {
-    const bb = db.bloodBanks.find(b => b.id === r.bloodBankId) || db.bloodBanks[0];
-    const latestEvent = r.timeline && r.timeline.length > 0 ? r.timeline[r.timeline.length - 1] : null;
+  // 1. Authoritative Blood Dispatches (Blood Bank -> Hospital)
+  // Strictly filter genuine persisted dispatch records for this hospital
+  const bloodDispatches = (db.bloodDispatches || [])
+    .filter(d => d.hospitalId === hospitalId && d.status !== 'Cancelled')
+    .map(d => {
+      const bb = db.bloodBanks.find(b => b.id === d.bloodBankId);
+      const hasValidBbCoord = isValidCoordinate(bb?.latitude, bb?.longitude);
+      const corridorDistanceKm = hasValidHospCoord && hasValidBbCoord
+        ? Math.round(calcHaversineKm(bb!.latitude!, bb!.longitude!, hospLat!, hospLng!) * 10) / 10
+        : null;
 
-    return {
-      requestId: r.id,
-      bloodGroup: r.bloodGroup,
-      component: r.component,
-      quantityUnits: r.quantityUnits,
-      urgency: r.urgency,
-      status: r.status,
-      bloodBankId: r.bloodBankId,
-      bloodBankName: r.bloodBankName || bb?.bloodBankName,
-      originCoordinates: bb ? { lat: bb.latitude, lng: bb.longitude } : null,
-      destinationCoordinates: { lat: hospLat, lng: hospLng },
-      requiredByDate: r.requiredByDate,
-      latestTimelineEvent: latestEvent,
-      assignedUnitIds: r.assignedUnitIds || [],
-      liveTrackingAvailable: false,
-      trackingNote: 'Live courier vehicle GPS telemetry is not integrated. Dispatches follow scheduled courier transit and verified hospital hand-off procedures.'
-    };
-  });
+      return {
+        dispatchId: d.id,
+        requestId: d.requestId,
+        movementType: 'blood_dispatch' as const,
+        direction: 'Blood Bank → Hospital',
+        status: d.status,
+        bloodGroup: d.bloodGroup,
+        component: d.component,
+        quantityUnits: d.quantityUnits,
+        unitIds: d.unitIds,
+        courierType: d.courierType,
+        courierReference: d.courierReference,
+        packagingType: d.packagingType,
+        targetTransportTemp: d.targetTransportTemp,
+        coldChainMonitoring: d.coldChainMonitoring,
+        specialHandlingInstructions: d.specialHandlingInstructions,
+        preparedAt: d.preparedAt,
+        dispatchedAt: d.dispatchedAt,
+        receivedAt: d.receivedAt,
+        origin: {
+          facilityId: d.bloodBankId,
+          facilityName: d.bloodBankName || bb?.bloodBankName || 'Blood Bank',
+          address: bb?.address || '',
+          city: bb?.city || '',
+          latitude: bb?.latitude,
+          longitude: bb?.longitude,
+          hasValidCoordinates: hasValidBbCoord
+        },
+        destination: {
+          facilityId: hosp.id,
+          facilityName: (hosp as any).hospitalName || (hosp as any).name || 'Hospital',
+          address: (hosp as any).address || '',
+          city: (hosp as any).city || '',
+          latitude: hospLat,
+          longitude: hospLng,
+          hasValidCoordinates: hasValidHospCoord
+        },
+        corridorDistanceKm,
+        liveTrackingAvailable: false,
+        trackingNote: 'Direct cold-chain courier transport. Live GPS vehicle telemetry is not connected; following verified chain-of-custody hand-off protocol.'
+      };
+    });
+
+  // 2. Authoritative Patient Sample Shipments (Hospital -> Blood Bank)
+  const sampleShipments = (db.patientSamples || [])
+    .filter(s => s.hospitalId === hospitalId)
+    .map(s => {
+      const req = db.bloodRequests.find(r => r.id === s.requestId);
+      const targetBankId = req?.bloodBankId || (req?.routedBankOffers && req.routedBankOffers.length > 0 ? req.routedBankOffers[0].bloodBankId : undefined);
+      const bb = targetBankId ? db.bloodBanks.find(b => b.id === targetBankId) : undefined;
+      const hasValidBbCoord = isValidCoordinate(bb?.latitude, bb?.longitude);
+      const corridorDistanceKm = hasValidHospCoord && hasValidBbCoord
+        ? Math.round(calcHaversineKm(hospLat!, hospLng!, bb!.latitude!, bb!.longitude!) * 10) / 10
+        : null;
+
+      return {
+        sampleId: s.id,
+        requestId: s.requestId,
+        movementType: 'sample_transport' as const,
+        direction: 'Hospital → Blood Bank Laboratory',
+        patientReferenceId: s.patientReferenceId,
+        sampleType: s.sampleType,
+        status: s.status,
+        submittedAt: s.submittedAt,
+        verificationNotes: s.verificationNotes,
+        origin: {
+          facilityId: hosp.id,
+          facilityName: (hosp as any).hospitalName || (hosp as any).name || 'Hospital',
+          address: (hosp as any).address || '',
+          city: (hosp as any).city || '',
+          latitude: hospLat,
+          longitude: hospLng,
+          hasValidCoordinates: hasValidHospCoord
+        },
+        destination: bb ? {
+          facilityId: bb.id,
+          facilityName: bb.bloodBankName || bb.name,
+          address: bb.address || '',
+          city: bb.city || '',
+          latitude: bb.latitude,
+          longitude: bb.longitude,
+          hasValidCoordinates: hasValidBbCoord
+        } : null,
+        corridorDistanceKm,
+        liveTrackingAvailable: false,
+        trackingNote: 'Hospital laboratory sample transport for pre-transfusion cross-matching. Verified hand-off at blood center receiving intake.'
+      };
+    });
 
   res.json({
     success: true,
@@ -861,10 +971,13 @@ export const getHospitalLogistics = async (req: AuthenticatedRequest, res: Respo
       address: (hosp as any).address || '',
       city: (hosp as any).city || '',
       latitude: hospLat,
-      longitude: hospLng
+      longitude: hospLng,
+      hasValidCoordinates: hasValidHospCoord
     },
     bloodBanks,
-    activeDispatches,
+    bloodDispatches,
+    sampleShipments,
+    activeDispatches: bloodDispatches,
     telematics: {
       liveCourierGpsIntegrated: false,
       message: 'Fleet telematics GPS provider is currently offline. Transit records derive from facility dispatch events.'
@@ -1390,6 +1503,7 @@ export const updateHospitalProfile = async (req: AuthenticatedRequest, res: Resp
   if (postalCode !== undefined) hosp.postalCode = String(postalCode).trim();
 
   db.saveSnapshot();
+  await persistRecordDirect('hospitals', hosp);
 
   const { passwordHash, ...data } = hosp;
   res.json({

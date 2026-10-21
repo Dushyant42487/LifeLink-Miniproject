@@ -48,8 +48,12 @@ const calculateDaysRemaining = (expiryDateStr: string): number => {
  */
 const resolveBloodBank = (req: AuthenticatedRequest) => {
   const userId = req.user?.id;
-  if (!userId) return null;
-  return db.bloodBanks.find(b => b.id === userId || b.registrationId === userId) || null;
+  const userEmail = req.user?.email?.toLowerCase().trim();
+  if (!userId && !userEmail) return null;
+  return db.bloodBanks.find(b => 
+    (userId && (b.id === userId || b.registrationId === userId)) ||
+    (userEmail && b.email && b.email.toLowerCase().trim() === userEmail)
+  ) || null;
 };
 
 // Memory cache for rapid duplicate collection submission protection
@@ -2491,13 +2495,35 @@ export const getBloodBankRequests = async (req: AuthenticatedRequest, res: Respo
     const remainingNeeded = Math.max(0, r.quantityUnits - (r.fulfilledUnits || 0));
     const allocatedUnitsCount = r.assignedUnitIds?.length || 0;
     const linkedDispatch = db.bloodDispatches.find(d => d.requestId === r.id);
+    const linkedSamples = db.patientSamples.filter(s => s.requestId === r.id);
     const myOffer = (r.routedBankOffers || []).find(o => o.bloodBankId === bankId);
+    const hosp = db.hospitals.find(h => h.id === r.hospitalId);
+
+    const hospitalCoordinates = (hosp && isValidCoordinate(hosp.latitude, hosp.longitude)) ? {
+      lat: hosp.latitude,
+      lng: hosp.longitude,
+      hospitalName: hosp.hospitalName || hosp.name,
+      address: hosp.address,
+      city: hosp.city
+    } : null;
+
+    const bankCoordinates = (bb && isValidCoordinate(bb.latitude, bb.longitude)) ? {
+      lat: bb.latitude,
+      lng: bb.longitude,
+      bloodBankName: bb.bloodBankName || bb.name,
+      address: bb.address,
+      city: bb.city
+    } : null;
+
     return {
       ...r,
       remainingNeeded,
       allocatedUnitsCount,
       linkedDispatch: linkedDispatch || null,
-      myOffer: myOffer || null
+      linkedSamples,
+      myOffer: myOffer || null,
+      hospitalCoordinates,
+      bankCoordinates
     };
   });
 
@@ -2709,8 +2735,26 @@ export const getBloodBankRequestById = async (req: AuthenticatedRequest, res: Re
   }).filter(Boolean);
 
   const linkedDispatch = db.bloodDispatches.find(d => d.requestId === request.id) || null;
+  const linkedSamples = db.patientSamples.filter(s => s.requestId === request.id);
   const remainingNeeded = Math.max(0, request.quantityUnits - (request.fulfilledUnits || 0));
   const myOffer = (request.routedBankOffers || []).find(o => o.bloodBankId === bankId) || null;
+  const hosp = db.hospitals.find(h => h.id === request.hospitalId);
+
+  const hospitalCoordinates = (hosp && isValidCoordinate(hosp.latitude, hosp.longitude)) ? {
+    lat: hosp.latitude,
+    lng: hosp.longitude,
+    hospitalName: hosp.hospitalName || hosp.name,
+    address: hosp.address,
+    city: hosp.city
+  } : null;
+
+  const bankCoordinates = (bb && isValidCoordinate(bb.latitude, bb.longitude)) ? {
+    lat: bb.latitude,
+    lng: bb.longitude,
+    bloodBankName: bb.bloodBankName || bb.name,
+    address: bb.address,
+    city: bb.city
+  } : null;
 
   res.json({
     success: true,
@@ -2719,10 +2763,14 @@ export const getBloodBankRequestById = async (req: AuthenticatedRequest, res: Re
       remainingNeeded,
       allocatedUnitsCount: assignedUnits.length,
       linkedDispatch,
-      myOffer
+      linkedSamples,
+      myOffer,
+      hospitalCoordinates,
+      bankCoordinates
     },
     assignedUnits,
-    dispatch: linkedDispatch
+    dispatch: linkedDispatch,
+    samples: linkedSamples
   });
 };
 
@@ -4573,6 +4621,8 @@ export const acceptCampRequest = async (req: AuthenticatedRequest, res: Response
     );
   }
 
+  db.saveSnapshot();
+
   res.json({
     success: true,
     message: 'Camp request approved and donation drive scheduled successfully!',
@@ -4612,6 +4662,8 @@ export const rejectCampRequest = async (req: AuthenticatedRequest, res: Response
     priority: 'medium',
     link: '/donor/camps'
   });
+
+  db.saveSnapshot();
 
   res.json({
     success: true,
@@ -4700,6 +4752,7 @@ export const updateBloodBankProfile = async (req: AuthenticatedRequest, res: Res
   }
 
   db.saveSnapshot();
+  await persistRecordDirect('blood_banks', bb);
 
   const { passwordHash, ...data } = bb;
   res.json({
@@ -4708,6 +4761,175 @@ export const updateBloodBankProfile = async (req: AuthenticatedRequest, res: Res
     profile: data
   });
 };
+
+/**
+ * 8. Authoritative Blood Bank Logistics & Cross-Portal Route Tracking
+ * Distinguishes outgoing blood dispatches (Blood Bank -> Hospital) and
+ * incoming patient sample shipments (Hospital -> Blood Bank) using genuine persisted coordinates.
+ */
+export const getBloodBankLogistics = async (req: AuthenticatedRequest, res: Response) => {
+  await safeSupabaseSync();
+
+  const bb = resolveBloodBank(req);
+  const bankId = bb?.id || req.user?.id;
+
+  if (!bankId) {
+    return res.status(401).json({ success: false, error: 'Unauthorized blood center' });
+  }
+
+  const bbFacility: any = bb || db.bloodBanks.find(b => b.id === bankId) || {
+    id: bankId,
+    bloodBankName: req.user?.name || 'Regional Blood Center',
+    address: (req.user as any)?.address || '',
+    city: (req.user as any)?.city || '',
+    latitude: (req.user as any)?.latitude,
+    longitude: (req.user as any)?.longitude
+  };
+
+  const bbLat = bbFacility.latitude;
+  const bbLng = bbFacility.longitude;
+  const hasValidBbCoord = isValidCoordinate(bbLat, bbLng);
+
+  // 1. Authoritative Outgoing Blood Dispatches (Blood Bank -> Hospital)
+  const bloodDispatches = (db.bloodDispatches || [])
+    .filter(d => d.bloodBankId === bankId && d.status !== 'Cancelled')
+    .map(d => {
+      const hosp = db.hospitals.find(h => h.id === d.hospitalId);
+      const hasValidHospCoord = isValidCoordinate(hosp?.latitude, hosp?.longitude);
+      const corridorDistanceKm = hasValidBbCoord && hasValidHospCoord
+        ? Math.round(calcHaversineKm(bbLat!, bbLng!, hosp!.latitude!, hosp!.longitude!) * 10) / 10
+        : null;
+
+      return {
+        dispatchId: d.id,
+        requestId: d.requestId,
+        movementType: 'blood_dispatch' as const,
+        direction: 'Blood Bank → Hospital',
+        status: d.status,
+        bloodGroup: d.bloodGroup,
+        component: d.component,
+        quantityUnits: d.quantityUnits,
+        unitIds: d.unitIds,
+        courierType: d.courierType,
+        courierReference: d.courierReference,
+        packagingType: d.packagingType,
+        targetTransportTemp: d.targetTransportTemp,
+        coldChainMonitoring: d.coldChainMonitoring,
+        specialHandlingInstructions: d.specialHandlingInstructions,
+        preparedAt: d.preparedAt,
+        dispatchedAt: d.dispatchedAt,
+        receivedAt: d.receivedAt,
+        origin: {
+          facilityId: bankId,
+          facilityName: bbFacility.bloodBankName || bbFacility.name || 'Blood Bank',
+          address: bbFacility.address || '',
+          city: bbFacility.city || '',
+          latitude: bbLat,
+          longitude: bbLng,
+          hasValidCoordinates: hasValidBbCoord
+        },
+        destination: {
+          facilityId: d.hospitalId,
+          facilityName: d.hospitalName || hosp?.hospitalName || hosp?.name || 'Hospital',
+          address: hosp?.address || '',
+          city: hosp?.city || '',
+          latitude: hosp?.latitude,
+          longitude: hosp?.longitude,
+          hasValidCoordinates: hasValidHospCoord
+        },
+        corridorDistanceKm,
+        liveTrackingAvailable: false,
+        trackingNote: 'Direct cold-chain courier transport. Live GPS vehicle telemetry is not connected; following verified chain-of-custody hand-off protocol.'
+      };
+    });
+
+  // 2. Authoritative Incoming Patient Sample Shipments (Hospital -> Blood Bank)
+  const bankRequestIds = new Set(
+    db.bloodRequests
+      .filter(r => r.bloodBankId === bankId || (r.routedBankOffers || []).some(o => o.bloodBankId === bankId && (o.status === 'Accepted' || o.status === 'Offered')))
+      .map(r => r.id)
+  );
+
+  const sampleShipments = (db.patientSamples || [])
+    .filter(s => bankRequestIds.has(s.requestId))
+    .map(s => {
+      const hosp = db.hospitals.find(h => h.id === s.hospitalId);
+      const req = db.bloodRequests.find(r => r.id === s.requestId);
+      const hasValidHospCoord = isValidCoordinate(hosp?.latitude, hosp?.longitude);
+      const corridorDistanceKm = hasValidHospCoord && hasValidBbCoord
+        ? Math.round(calcHaversineKm(hosp!.latitude!, hosp!.longitude!, bbLat!, bbLng!) * 10) / 10
+        : null;
+
+      return {
+        sampleId: s.id,
+        requestId: s.requestId,
+        movementType: 'sample_transport' as const,
+        direction: 'Hospital → Blood Bank Laboratory',
+        patientReferenceId: s.patientReferenceId,
+        sampleType: s.sampleType,
+        status: s.status,
+        submittedAt: s.submittedAt,
+        verificationNotes: s.verificationNotes,
+        origin: {
+          facilityId: s.hospitalId,
+          facilityName: req?.hospitalName || hosp?.hospitalName || hosp?.name || 'Hospital',
+          address: hosp?.address || '',
+          city: hosp?.city || '',
+          latitude: hosp?.latitude,
+          longitude: hosp?.longitude,
+          hasValidCoordinates: hasValidHospCoord
+        },
+        destination: {
+          facilityId: bankId,
+          facilityName: bbFacility.bloodBankName || bbFacility.name || 'Blood Bank',
+          address: bbFacility.address || '',
+          city: bbFacility.city || '',
+          latitude: bbLat,
+          longitude: bbLng,
+          hasValidCoordinates: hasValidBbCoord
+        },
+        corridorDistanceKm,
+        liveTrackingAvailable: false,
+        trackingNote: 'Hospital laboratory sample transport for pre-transfusion cross-matching. Hand-off verified upon physical tube intake at blood bank receiving desk.'
+      };
+    });
+
+  // 3. Connected Hospitals
+  const connectedHospitals = db.hospitals.map(h => {
+    const hasValidHospCoord = isValidCoordinate(h.latitude, h.longitude);
+    const distanceKm = hasValidBbCoord && hasValidHospCoord
+      ? Math.round(calcHaversineKm(bbLat!, bbLng!, h.latitude!, h.longitude!) * 10) / 10
+      : null;
+
+    return {
+      hospitalId: h.id,
+      hospitalName: h.hospitalName || h.name,
+      address: `${h.address || ''}${h.city ? `, ${h.city}` : ''}`,
+      emergencyPhone: h.emergencyPhone || h.phone || '',
+      latitude: h.latitude,
+      longitude: h.longitude,
+      hasValidCoordinates: hasValidHospCoord,
+      distanceKm
+    };
+  });
+
+  res.json({
+    success: true,
+    facility: {
+      id: bbFacility.id,
+      bloodBankName: bbFacility.bloodBankName || bbFacility.name,
+      address: bbFacility.address,
+      city: bbFacility.city,
+      latitude: bbLat,
+      longitude: bbLng,
+      hasValidCoordinates: hasValidBbCoord
+    },
+    bloodDispatches,
+    sampleShipments,
+    connectedHospitals
+  });
+};
+
 
 
 

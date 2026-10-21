@@ -269,6 +269,10 @@ export const App: React.FC = () => {
               path="/blood-bank/ai-insights" 
               element={<ProtectedRoute allowedRoles={['blood_bank']}><AIInsightsPage /></ProtectedRoute>} 
             />
+            <Route 
+              path="/blood-bank/profile" 
+              element={<ProtectedRoute allowedRoles={['blood_bank']}><BloodBankProfilePage /></ProtectedRoute>} 
+            />
 
             {/* Catch All Redirect */}
             <Route path="*" element={<Navigate to="/" replace />} />

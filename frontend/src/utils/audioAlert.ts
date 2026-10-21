@@ -26,6 +26,7 @@ class AudioAlertManager {
   } | null = null;
 
   private inMemoryPlayedIds: Set<string> = new Set();
+  private pendingAlert: { urgency: AlertUrgency; eventId?: string; forceTest: boolean } | null = null;
   private isMuted: boolean = false;
   private volume: number = 0.8;
 
@@ -110,6 +111,33 @@ class AudioAlertManager {
   }
 
   /**
+   * Global unlock for browser autoplay policies: Initializes / resumes AudioContext on user gesture
+   * and immediately executes any pending emergency/urgent alert that arrived while audio was suspended.
+   */
+  public async unlockAudio(): Promise<boolean> {
+    if (typeof window === 'undefined') return false;
+    const ctx = this.getOrCreateContext();
+    if (!ctx) return false;
+
+    if (ctx.state === 'suspended') {
+      try {
+        await ctx.resume();
+      } catch (err) {
+        console.warn('AudioContext resume failed:', err);
+        return false;
+      }
+    }
+
+    if (ctx.state === 'running' && this.pendingAlert) {
+      const { urgency, eventId, forceTest } = this.pendingAlert;
+      this.pendingAlert = null;
+      this.playAlert(urgency, eventId, forceTest);
+    }
+
+    return ctx.state === 'running';
+  }
+
+  /**
    * Deduplication check: Verifies if a given notification or event ID has already played
    */
   public hasPlayed(eventId: string): boolean {
@@ -183,7 +211,6 @@ class AudioAlertManager {
       if (this.hasPlayed(eventId)) {
         return false; // Prevent repeated alert
       }
-      this.markAsPlayed(eventId);
     }
 
     if (this.isMuted && !forceTest) {
@@ -192,6 +219,20 @@ class AudioAlertManager {
 
     const ctx = this.getOrCreateContext();
     if (!ctx) return false;
+
+    if (ctx.state === 'suspended') {
+      // AudioContext is locked pending user interaction
+      // Store pending alert so user gesture immediately triggers it
+      this.pendingAlert = { urgency, eventId, forceTest };
+      ctx.resume().catch(() => {});
+      return false;
+    }
+
+    // Now that AudioContext is confirmed running, mark as played for deduplication
+    if (!forceTest && eventId) {
+      this.markAsPlayed(eventId);
+    }
+    this.pendingAlert = null;
 
     // Stop any currently playing tone
     this.stop();

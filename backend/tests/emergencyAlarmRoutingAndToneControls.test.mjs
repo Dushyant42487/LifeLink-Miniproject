@@ -237,7 +237,11 @@ describe('LifeLink: Emergency Alarm Routing & Tone Controls Verification Suite',
     assert.strictEqual(createRes.status, 201);
     const req = createRes.data.request;
     const targetOffer = req.routedBankOffers[0];
-    const targetBankToken = targetOffer.bloodBankId === 'bb-1' ? bloodBank1Token : bloodBank2Token;
+    const targetBankToken = targetOffer.bloodBankId === 'bb-1' 
+      ? bloodBank1Token 
+      : targetOffer.bloodBankId === 'bb-2' 
+      ? bloodBank2Token 
+      : bloodBank3Token;
 
     const notifs = await api('/notifications', { token: targetBankToken });
     const routineNotif = notifs.data.notifications.find(n => n.data?.requestId === req.id);

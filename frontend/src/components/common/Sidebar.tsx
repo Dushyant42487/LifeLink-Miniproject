@@ -209,6 +209,10 @@ export const Sidebar: React.FC = () => {
                 <BrainCircuit className="w-4 h-4 text-purple-600" />
                 <span>AI Intelligence</span>
               </NavLink>
+              <NavLink to="/blood-bank/profile" className={linkClasses}>
+                <Building2 className="w-4 h-4 text-rose-600" />
+                <span>Organization Profile & Location</span>
+              </NavLink>
             </>
           )}
 

@@ -341,6 +341,7 @@ export const createCampRequest = async (req: AuthenticatedRequest, res: Response
   };
 
   db.campRequests.unshift(newRequest);
+  db.saveSnapshot();
 
   // Dispatch real-time notification to the target blood bank
   await notificationService.dispatchNotification({
@@ -381,6 +382,7 @@ export const cancelCampRequest = async (req: AuthenticatedRequest, res: Response
   request.status = 'Cancelled';
   request.updatedAt = new Date().toISOString();
   request.statusNote = 'Cancelled by requester.';
+  db.saveSnapshot();
 
   res.json({ success: true, message: 'Camp request cancelled successfully.', request });
 };

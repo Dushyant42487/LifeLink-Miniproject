@@ -278,13 +278,12 @@ export const DonorCampsPage: React.FC = () => {
 
   const filteredCamps = camps
     .map(camp => {
-      const campLat = camp.latitude || 40.7128;
-      const campLng = camp.longitude || -74.0060;
+      const hasValidCoords = typeof camp.latitude === 'number' && typeof camp.longitude === 'number' && !isNaN(camp.latitude) && !isNaN(camp.longitude);
       let distanceKm: number | null = null;
-      if (userLocation) {
-        distanceKm = calculateHaversineDistanceKm(userLocation.lat, userLocation.lng, campLat, campLng);
+      if (userLocation && hasValidCoords) {
+        distanceKm = calculateHaversineDistanceKm(userLocation.lat, userLocation.lng, camp.latitude!, camp.longitude!);
       }
-      return { ...camp, distanceKm };
+      return { ...camp, hasValidCoords, distanceKm };
     })
     .filter(camp => {
       const matchesSearch = !search || 
@@ -308,18 +307,20 @@ export const DonorCampsPage: React.FC = () => {
       return 0;
     });
 
-  // Convert filtered camps to Map Markers
-  const mapMarkers: MapMarker[] = filteredCamps.map(camp => ({
-    id: camp.id,
-    lat: camp.latitude || 40.7128,
-    lng: camp.longitude || -74.0060,
-    title: camp.title,
-    address: `${camp.location} (${camp.address})${camp.distanceKm !== null ? ` • ${camp.distanceKm} km away` : ''}`,
-    city: camp.city,
-    type: 'camp',
-    isUrgent: camp.isUrgent,
-    onMarkerClick: () => setSelectedMapMarkerId(camp.id)
-  }));
+  // Convert filtered camps with valid coordinates to Map Markers (no fake coordinate fallbacks)
+  const mapMarkers: MapMarker[] = filteredCamps
+    .filter(camp => camp.hasValidCoords && typeof camp.latitude === 'number' && typeof camp.longitude === 'number')
+    .map(camp => ({
+      id: camp.id,
+      lat: camp.latitude!,
+      lng: camp.longitude!,
+      title: camp.title,
+      address: `${camp.location} (${camp.address})${camp.distanceKm !== null ? ` • ${camp.distanceKm} km away` : ''}`,
+      city: camp.city,
+      type: 'camp',
+      isUrgent: camp.isUrgent,
+      onMarkerClick: () => setSelectedMapMarkerId(camp.id)
+    }));
 
   if (userLocation) {
     mapMarkers.unshift({
@@ -634,11 +635,15 @@ export const DonorCampsPage: React.FC = () => {
                             <MapPin className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
                             <span>
                               {camp.location} ({camp.address}), {camp.city}
-                              {camp.distanceKm !== null && (
+                              {camp.distanceKm !== null ? (
                                 <span className="ml-1.5 px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 font-extrabold text-[10px] border border-emerald-200">
                                   ~{camp.distanceKm} km away
                                 </span>
-                              )}
+                              ) : !camp.hasValidCoords ? (
+                                <span className="ml-1.5 px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 font-medium text-[10px] border border-slate-200">
+                                  Map pin unconfigured
+                                </span>
+                              ) : null}
                             </span>
                           </div>
                           <div className="flex items-center space-x-2">

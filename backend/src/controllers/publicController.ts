@@ -133,15 +133,27 @@ export const getNotifications = async (req: Request, res: Response) => {
 export const getPublicLocations = async (req: Request, res: Response) => {
   await safeSupabaseSync();
 
-  // Deduplicate and filter active blood banks
+  // Deduplicate and filter active blood banks by normalized name and city
   const seenBankKeys = new Set<string>();
   const bloodBanks: any[] = [];
 
-  for (const b of db.bloodBanks) {
+  // Sort to prioritize canonical IDs (bb-*) and records with valid coordinates first
+  const sortedBanks = [...db.bloodBanks].sort((a, b) => {
+    const aValid = isValidCoordinate(a.latitude, a.longitude) ? 1 : 0;
+    const bValid = isValidCoordinate(b.latitude, b.longitude) ? 1 : 0;
+    if (aValid !== bValid) return bValid - aValid;
+    const aCanonical = a.id?.startsWith('bb-') ? 1 : 0;
+    const bCanonical = b.id?.startsWith('bb-') ? 1 : 0;
+    return bCanonical - aCanonical;
+  });
+
+  for (const b of sortedBanks) {
     if (!b.id || b.isActive === false || b.verificationStatus === 'Rejected') continue;
     const name = b.name || b.bloodBankName;
     if (!name) continue;
-    const dedupeKey = `${b.id}-${name.trim().toLowerCase()}`;
+    const normName = name.trim().toLowerCase();
+    const normCity = (b.city || '').trim().toLowerCase();
+    const dedupeKey = `${normName}:::${normCity}`;
     if (seenBankKeys.has(dedupeKey)) continue;
     seenBankKeys.add(dedupeKey);
 
@@ -164,11 +176,22 @@ export const getPublicLocations = async (req: Request, res: Response) => {
   const seenHospKeys = new Set<string>();
   const hospitals: any[] = [];
 
-  for (const h of db.hospitals) {
+  const sortedHosps = [...db.hospitals].sort((a, b) => {
+    const aValid = isValidCoordinate(a.latitude, a.longitude) ? 1 : 0;
+    const bValid = isValidCoordinate(b.latitude, b.longitude) ? 1 : 0;
+    if (aValid !== bValid) return bValid - aValid;
+    const aCanonical = a.id?.startsWith('hosp-') ? 1 : 0;
+    const bCanonical = b.id?.startsWith('hosp-') ? 1 : 0;
+    return bCanonical - aCanonical;
+  });
+
+  for (const h of sortedHosps) {
     if (!h.id) continue;
     const name = h.hospitalName || h.name;
     if (!name) continue;
-    const dedupeKey = `${h.id}-${name.trim().toLowerCase()}`;
+    const normName = name.trim().toLowerCase();
+    const normCity = (h.city || '').trim().toLowerCase();
+    const dedupeKey = `${normName}:::${normCity}`;
     if (seenHospKeys.has(dedupeKey)) continue;
     seenHospKeys.add(dedupeKey);
 

@@ -44,7 +44,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     setUnreadCount(notifs.filter(n => !n.read).length);
   };
 
-  // Fetch full notification list
+  // Fetch full notification list and check for missed urgent/emergency audio triggers
   const refreshNotifications = useCallback(async () => {
     if (!user) return;
     try {
@@ -52,6 +52,28 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       const res = await notificationsApi.getNotifications();
       if (res.success && Array.isArray(res.notifications) && isMountedRef.current) {
         updateCounts(res.notifications);
+
+        // Visibility-change / polling fallback for blood bank staff
+        if (user.role === 'blood_bank') {
+          const now = Date.now();
+          const recentAlert = res.notifications.find((n: AppNotification) => {
+            if (n.read) return false;
+            const notifTime = n.createdAt ? new Date(n.createdAt).getTime() : now;
+            // Within last 2 minutes
+            if (now - notifTime > 120000) return false;
+            const urgencyVal = n.data?.urgency;
+            const isEmerg = n.type === 'emergency' || n.priority === 'urgent' || urgencyVal === 'Emergency';
+            const isUrg = (n.priority === 'high' && n.type !== 'emergency') || urgencyVal === 'Urgent';
+            return (isEmerg || isUrg) && !audioAlertManager.hasPlayed(n.id);
+          });
+
+          if (recentAlert) {
+            const urgencyVal = recentAlert.data?.urgency;
+            const isEmerg = recentAlert.type === 'emergency' || recentAlert.priority === 'urgent' || urgencyVal === 'Emergency';
+            audioAlertManager.playAlert(isEmerg ? 'Emergency' : 'Urgent', recentAlert.id);
+            setActiveAlertBanner(recentAlert);
+          }
+        }
       }
     } catch (err) {
       console.warn('Failed to fetch notifications:', err);
@@ -283,6 +305,14 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
     connectSSE();
 
+    // Global gesture listener to unlock Web Audio API on first user interaction
+    const handleUserGesture = () => {
+      audioAlertManager.unlockAudio();
+    };
+    window.addEventListener('click', handleUserGesture, { capture: true, passive: true });
+    window.addEventListener('keydown', handleUserGesture, { capture: true, passive: true });
+    window.addEventListener('touchstart', handleUserGesture, { capture: true, passive: true });
+
     // Visibility-aware polling fallback to catch any missed updates when tab refocuses
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && user) {
@@ -294,6 +324,9 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     return () => {
       isMountedRef.current = false;
       audioAlertManager.stop();
+      window.removeEventListener('click', handleUserGesture, { capture: true });
+      window.removeEventListener('keydown', handleUserGesture, { capture: true });
+      window.removeEventListener('touchstart', handleUserGesture, { capture: true });
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);

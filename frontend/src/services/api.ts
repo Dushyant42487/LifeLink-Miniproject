@@ -287,6 +287,7 @@ export const bloodBankApi = {
     apiFetch(`/blood-bank/requests/${id}/confirm-dispatch`, { method: 'POST', body: JSON.stringify(data || {}) }),
   getDispatchSlip: (id: string) => apiFetch(`/blood-bank/dispatches/${id}/slip`),
   getAllocationMatrix: () => apiFetch('/blood-bank/allocation-matrix'),
+  getLogistics: () => apiFetch('/blood-bank/logistics'),
 
   // Organizational Camp Requests Coordination
   getCampRequests: () => apiFetch('/blood-bank/camp-requests'),

@@ -186,6 +186,13 @@ describe('LifeLink: Saved Location, Donor Verification & Real-Time Notifications
   describe('Phase 3 — Donor Verification Workflow & Tenant Isolation', () => {
 
     test('2.1: Client cannot self-approve verification or eligibility directly via profile API', async () => {
+      // Ensure donor starts in non-verified state for idempotency across repeated test runs
+      await api(`/blood-bank/donors/${donorId}/verify`, {
+        method: 'POST',
+        token: bb2Token,
+        body: { status: 'Needs More Info', notes: 'Resetting test fixture status' }
+      }).catch(() => {});
+
       const maliciousAttempt = await api('/donors/profile', {
         method: 'PUT',
         token: donorToken,

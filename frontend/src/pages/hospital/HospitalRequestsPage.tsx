@@ -1,10 +1,33 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { hospitalApi } from '../../services/api';
+import { hospitalApi, apiFetch } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { BloodRequest, RequestStatus, PatientSample, RequestMessage } from '../../types';
 import { StatusBadge } from '../../components/common/StatusBadge';
-import { FileText, CheckCircle2, Clock, MessageSquare, TestTube, ArrowRight, RefreshCw, AlertCircle, PlusCircle, ShieldCheck, X, Truck, Printer, AlertTriangle, PackageCheck, Radio, MapPin } from 'lucide-react';
+import { 
+  FileText, 
+  CheckCircle2, 
+  Clock, 
+  MessageSquare, 
+  TestTube, 
+  ArrowRight, 
+  RefreshCw, 
+  AlertCircle, 
+  PlusCircle, 
+  ShieldCheck, 
+  X, 
+  Truck, 
+  Printer, 
+  AlertTriangle, 
+  PackageCheck, 
+  Radio, 
+  MapPin,
+  Navigation,
+  Thermometer,
+  Building2
+} from 'lucide-react';
+import { OSMMap, MapMarker, MapPolyline } from '../../components/common/OSMMap';
+import { calcHaversineKm, isValidCoordinate } from '../../utils/geo';
 
 export const HospitalRequestsPage: React.FC = () => {
   const { user } = useAuth();
@@ -36,6 +59,21 @@ export const HospitalRequestsPage: React.FC = () => {
   const [showSlipModal, setShowSlipModal] = useState(false);
   const [hospitalSlipData, setHospitalSlipData] = useState<any | null>(null);
   const [loadingSlip, setLoadingSlip] = useState(false);
+
+  // Phase 4: Geospatial Route Visualization state
+  const [showRouteModal, setShowRouteModal] = useState(false);
+  const [routeMovementType, setRouteMovementType] = useState<'dispatch' | 'sample'>('dispatch');
+  const [hospitalProfile, setHospitalProfile] = useState<any | null>(null);
+  const [availableBloodBanks, setAvailableBloodBanks] = useState<any[]>([]);
+
+  useEffect(() => {
+    hospitalApi.getProfile().then(res => {
+      if (res.success && res.hospital) setHospitalProfile(res.hospital);
+    }).catch(() => {});
+    apiFetch('/public/locations').then(res => {
+      if (res.success && res.bloodBanks) setAvailableBloodBanks(res.bloodBanks);
+    }).catch(() => {});
+  }, [user]);
 
   const fetchRequests = async () => {
     setLoading(true);
@@ -208,6 +246,48 @@ export const HospitalRequestsPage: React.FC = () => {
 
   const facilityName = (user as any)?.hospitalName || user?.name || 'Hospital Facility';
 
+  const getRouteDetails = () => {
+    if (!selectedReq) return null;
+
+    let hospLat = (selectedReq as any).hospitalCoordinates?.lat ?? hospitalProfile?.latitude ?? (user as any)?.latitude;
+    let hospLng = (selectedReq as any).hospitalCoordinates?.lng ?? hospitalProfile?.longitude ?? (user as any)?.longitude;
+    const hospName = (selectedReq as any).hospitalCoordinates?.hospitalName || selectedReq.hospitalName || hospitalProfile?.hospitalName || (user as any)?.hospitalName || (user as any)?.name || 'Hospital Facility';
+    const hospAddress = (selectedReq as any).hospitalCoordinates?.address || hospitalProfile?.address || (user as any)?.address || '';
+    const hospCity = (selectedReq as any).hospitalCoordinates?.city || hospitalProfile?.city || (user as any)?.city || '';
+
+    const matchedBank = availableBloodBanks.find(b => b.id === selectedReq.bloodBankId);
+    let bankLat = (selectedReq as any).bankCoordinates?.lat ?? matchedBank?.latitude;
+    let bankLng = (selectedReq as any).bankCoordinates?.lng ?? matchedBank?.longitude;
+    const bankName = (selectedReq as any).bankCoordinates?.bloodBankName || selectedReq.bloodBankName || matchedBank?.name || 'Assigned Blood Center';
+    const bankAddress = (selectedReq as any).bankCoordinates?.address || matchedBank?.address || '';
+    const bankCity = (selectedReq as any).bankCoordinates?.city || matchedBank?.city || '';
+
+    const hasValidHosp = isValidCoordinate(hospLat, hospLng);
+    const hasValidBank = isValidCoordinate(bankLat, bankLng);
+
+    const distanceKm = (hasValidHosp && hasValidBank) ? calcHaversineKm(Number(hospLat), Number(hospLng), Number(bankLat), Number(bankLng)) : null;
+
+    const dispatch = (selectedReq as any).linkedDispatch;
+    const samples = linkedSamples;
+
+    return {
+      hospLat: hasValidHosp ? Number(hospLat) : null,
+      hospLng: hasValidHosp ? Number(hospLng) : null,
+      hospName,
+      hospAddress,
+      hospCity,
+      bankLat: hasValidBank ? Number(bankLat) : null,
+      bankLng: hasValidBank ? Number(bankLng) : null,
+      bankName,
+      bankAddress,
+      bankCity,
+      distanceKm,
+      dispatch,
+      samples,
+      hasCoordinates: hasValidHosp && hasValidBank
+    };
+  };
+
   return (
     <div className="space-y-6">
       
@@ -247,6 +327,52 @@ export const HospitalRequestsPage: React.FC = () => {
           </Link>
         </div>
       </div>
+
+      {/* Submission Success Confirmation Banner */}
+      {searchParams.get('submitted') === 'true' && selectedReq && (
+        <div className="bg-emerald-50 border-2 border-emerald-400 rounded-2xl p-5 shadow-sm space-y-3 animate-in fade-in duration-200">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center space-x-3.5">
+              <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold">
+                <CheckCircle2 className="w-6 h-6 text-emerald-600" />
+              </div>
+              <div>
+                <div className="flex items-center space-x-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded border border-emerald-300">
+                    Requisition Transmitted Successfully
+                  </span>
+                  <span className="font-mono text-xs font-bold text-slate-700">#{selectedReq.id}</span>
+                </div>
+                <h2 className="text-base font-black text-slate-900 mt-0.5">
+                  {selectedReq.bloodGroup} {selectedReq.component} • {selectedReq.quantityUnits} Unit(s) Requested
+                </h2>
+                <p className="text-xs text-slate-600">
+                  Status: <strong>{selectedReq.status}</strong> • Patient Ref: <strong>{selectedReq.patientReferenceId}</strong> • Dept: <strong>{selectedReq.department}</strong>
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center space-x-2 shrink-0">
+              <Link
+                to="/hospital/requests/new"
+                className="px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-xl text-xs font-bold transition shadow-2xs"
+              >
+                + Create Another Requisition
+              </Link>
+              <button
+                onClick={() => {
+                  const nextParams = new URLSearchParams(searchParams);
+                  nextParams.delete('submitted');
+                  setSearchParams(nextParams);
+                }}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-emerald-100 transition cursor-pointer"
+                title="Dismiss"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Error Banner */}
       {error && (
@@ -419,6 +545,18 @@ export const HospitalRequestsPage: React.FC = () => {
                     </button>
                   )}
 
+                  <button
+                    onClick={() => {
+                      setRouteMovementType((selectedReq.status === 'Dispatched' || selectedReq.status === 'Issued' || (selectedReq as any).linkedDispatch) ? 'dispatch' : 'sample');
+                      setShowRouteModal(true);
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 flex items-center space-x-1.5 transition-colors cursor-pointer"
+                    title="View physical route corridor and transit logistics"
+                  >
+                    <Navigation className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Transit Route</span>
+                  </button>
+
                   <Link
                     to={`/hospital/samples?requestId=${selectedReq.id}`}
                     className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center space-x-1 transition-colors"
@@ -524,14 +662,18 @@ export const HospitalRequestsPage: React.FC = () => {
                     <div>
                       <div className="flex items-center space-x-2">
                         <h3 className="font-bold text-sm text-slate-900">
-                          Automated Smart Emergency Routing
+                          {selectedReq.isAutoRouted ? 'Automated Smart Emergency Routing' : 'Direct Facility Requisition Offer'}
                         </h3>
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-black tracking-wide uppercase bg-indigo-100 text-indigo-800">
                           {selectedReq.routingStatus || 'Active'}
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-500">
-                        Search Radius: <strong>{selectedReq.routingSearchRadiusKm || 25} km</strong> • Escalation Steps: <strong>{selectedReq.routingExpansionCount || 0}</strong> • Unfulfilled Quantity: <strong className="text-blood-600">{selectedReq.remainingUnitsToFulfill ?? (selectedReq.quantityUnits - (selectedReq.fulfilledUnits || 0))} units</strong>
+                        {selectedReq.isAutoRouted ? (
+                          <>Search Radius: <strong>{selectedReq.routingSearchRadiusKm || 25} km</strong> • Escalation Steps: <strong>{selectedReq.routingExpansionCount || 0}</strong> • Unfulfilled Quantity: <strong className="text-blood-600">{selectedReq.remainingUnitsToFulfill ?? (selectedReq.quantityUnits - (selectedReq.fulfilledUnits || 0))} units</strong></>
+                        ) : (
+                          <>Target Facility: <strong>{selectedReq.bloodBankName}</strong> • Geographic Distance: <strong>{selectedReq.routedBankOffers?.[0]?.distanceKm !== undefined ? `${selectedReq.routedBankOffers[0].distanceKm} km` : 'Pending'}</strong> • Unfulfilled Quantity: <strong className="text-blood-600">{selectedReq.remainingUnitsToFulfill ?? (selectedReq.quantityUnits - (selectedReq.fulfilledUnits || 0))} units</strong></>
+                        )}
                       </p>
                     </div>
                   </div>
@@ -1111,6 +1253,294 @@ export const HospitalRequestsPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Route Modal */}
+      {showRouteModal && selectedReq && (() => {
+        const route = getRouteDetails();
+        if (!route) return null;
+
+        const isDispatch = routeMovementType === 'dispatch';
+        const originName = isDispatch ? route.bankName : route.hospName;
+        const originAddr = isDispatch ? route.bankAddress : route.hospAddress;
+        const originCoords = isDispatch 
+          ? (route.bankLat && route.bankLng ? `${route.bankLat.toFixed(4)}, ${route.bankLng.toFixed(4)}` : null)
+          : (route.hospLat && route.hospLng ? `${route.hospLat.toFixed(4)}, ${route.hospLng.toFixed(4)}` : null);
+
+        const destName = isDispatch ? route.hospName : route.bankName;
+        const destAddr = isDispatch ? route.hospAddress : route.bankAddress;
+        const destCoords = isDispatch
+          ? (route.hospLat && route.hospLng ? `${route.hospLat.toFixed(4)}, ${route.hospLng.toFixed(4)}` : null)
+          : (route.bankLat && route.bankLng ? `${route.bankLat.toFixed(4)}, ${route.bankLng.toFixed(4)}` : null);
+
+        const markers: MapMarker[] = [];
+        if (route.hasCoordinates) {
+          if (isDispatch) {
+            markers.push({
+              lat: route.bankLat!,
+              lng: route.bankLng!,
+              title: `Origin: ${route.bankName}`,
+              popupContent: `<strong>Origin (Blood Bank)</strong><br/>${route.bankName}<br/>${route.bankAddress}`,
+              color: 'red'
+            });
+            markers.push({
+              lat: route.hospLat!,
+              lng: route.hospLng!,
+              title: `Destination: ${route.hospName}`,
+              popupContent: `<strong>Destination (Hospital)</strong><br/>${route.hospName}<br/>${route.hospAddress}`,
+              color: 'blue'
+            });
+          } else {
+            markers.push({
+              lat: route.hospLat!,
+              lng: route.hospLng!,
+              title: `Origin: ${route.hospName}`,
+              popupContent: `<strong>Origin (Hospital)</strong><br/>${route.hospName}<br/>${route.hospAddress}`,
+              color: 'blue'
+            });
+            markers.push({
+              lat: route.bankLat!,
+              lng: route.bankLng!,
+              title: `Destination: ${route.bankName} Lab`,
+              popupContent: `<strong>Destination (Blood Bank Lab)</strong><br/>${route.bankName}<br/>${route.bankAddress}`,
+              color: 'red'
+            });
+          }
+        }
+
+        const polylines: MapPolyline[] = route.hasCoordinates ? [{
+          coordinates: isDispatch
+            ? [[route.bankLat!, route.bankLng!], [route.hospLat!, route.hospLng!]]
+            : [[route.hospLat!, route.hospLng!], [route.bankLat!, route.bankLng!]],
+          color: isDispatch ? '#9333ea' : '#2563eb',
+          weight: 4,
+          opacity: 0.85,
+          dashArray: isDispatch ? undefined : '6, 8'
+        }] : [];
+
+        const centerLat = route.hasCoordinates ? (route.bankLat! + route.hospLat!) / 2 : 16.8440;
+        const centerLng = route.hasCoordinates ? (route.bankLng! + route.hospLng!) / 2 : 74.6018;
+
+        return (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+            <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border border-slate-200">
+              {/* Header */}
+              <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
+                    <Navigation className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <h3 className="font-black text-slate-900 text-base">Physical Transit Route & Cold-Chain Corridor</h3>
+                      <span className="text-xs font-mono font-bold text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200">
+                        {selectedReq.id}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Authentic geospatial corridor between verified facility coordinates
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowRouteModal(false)}
+                  className="w-8 h-8 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-200 flex items-center justify-center transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Movement Type Switcher Tabs */}
+              <div className="px-5 pt-3 pb-0 bg-white border-b border-slate-200 flex space-x-2">
+                <button
+                  onClick={() => setRouteMovementType('dispatch')}
+                  className={`px-4 py-2 text-xs font-extrabold rounded-t-xl transition-all cursor-pointer flex items-center space-x-2 border-b-2 ${
+                    isDispatch
+                      ? 'border-purple-600 text-purple-700 bg-purple-50/60'
+                      : 'border-transparent text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  <Truck className="w-4 h-4" />
+                  <span>Blood Product Dispatch (Blood Bank → Hospital)</span>
+                  {route.dispatch && (
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  )}
+                </button>
+                <button
+                  onClick={() => setRouteMovementType('sample')}
+                  className={`px-4 py-2 text-xs font-extrabold rounded-t-xl transition-all cursor-pointer flex items-center space-x-2 border-b-2 ${
+                    !isDispatch
+                      ? 'border-blue-600 text-blue-700 bg-blue-50/60'
+                      : 'border-transparent text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  <TestTube className="w-4 h-4" />
+                  <span>Pre-Transfusion Sample Transport (Hospital → Lab)</span>
+                  {route.samples.length > 0 && (
+                    <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.2 rounded-full font-bold">
+                      {route.samples.length}
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              {/* Content Body */}
+              <div className="p-5 overflow-y-auto space-y-4">
+                
+                {/* Corridor Origin -> Destination Summary Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {/* Origin */}
+                  <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-1">
+                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block">
+                      {isDispatch ? 'Origin (Fulfilling Blood Center)' : 'Origin (Requesting Hospital)'}
+                    </span>
+                    <strong className="text-slate-900 block font-bold text-sm">{originName}</strong>
+                    {originAddr && <span className="text-slate-500 block truncate">{originAddr}</span>}
+                    {originCoords ? (
+                      <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded inline-block mt-1">
+                        GPS: {originCoords}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded inline-block mt-1">
+                        Coordinates unconfigured
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Mid Transit Metrics */}
+                  <div className="p-3.5 bg-indigo-50/50 rounded-xl border border-indigo-200 text-xs flex flex-col justify-between space-y-2">
+                    <div>
+                      <span className="text-[10px] font-black uppercase text-indigo-500 tracking-wider block">
+                        Verified Geospatial Metric
+                      </span>
+                      <div className="mt-1 flex items-baseline space-x-1.5">
+                        <strong className="text-xl font-black text-indigo-950 font-mono">
+                          {route.distanceKm !== null ? `${route.distanceKm.toFixed(1)} km` : 'N/A'}
+                        </strong>
+                        <span className="text-[11px] text-indigo-700 font-semibold">Corridor (Haversine)</span>
+                      </div>
+                    </div>
+
+                    <div className="text-[11px] text-slate-600">
+                      {isDispatch ? (
+                        <div>
+                          Status: <strong className="text-purple-700">{route.dispatch ? route.dispatch.status : 'Awaiting Fulfillment/Dispatch'}</strong>
+                        </div>
+                      ) : (
+                        <div>
+                          Linked Samples: <strong className="text-blue-700">{route.samples.length} registered</strong>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Destination */}
+                  <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-1">
+                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block">
+                      {isDispatch ? 'Destination (Receiving Hospital Facility)' : 'Destination (Testing Blood Bank Lab)'}
+                    </span>
+                    <strong className="text-slate-900 block font-bold text-sm">{destName}</strong>
+                    {destAddr && <span className="text-slate-500 block truncate">{destAddr}</span>}
+                    {destCoords ? (
+                      <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded inline-block mt-1">
+                        GPS: {destCoords}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded inline-block mt-1">
+                        Coordinates unconfigured
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Interactive Map */}
+                <div className="rounded-xl overflow-hidden border border-slate-200">
+                  {route.hasCoordinates ? (
+                    <OSMMap
+                      center={[centerLat, centerLng]}
+                      zoom={route.distanceKm && route.distanceKm > 50 ? 9 : 12}
+                      height="300px"
+                      markers={markers}
+                      polylines={polylines}
+                    />
+                  ) : (
+                    <div className="h-[260px] bg-slate-100 flex flex-col items-center justify-center p-6 text-center text-slate-500">
+                      <AlertTriangle className="w-8 h-8 text-amber-500 mb-2" />
+                      <p className="text-sm font-bold text-slate-700">Coordinates Incomplete for Route Visualization</p>
+                      <p className="text-xs text-slate-500 max-w-md mt-1">
+                        Both the Hospital ({route.hospName}) and Blood Bank ({route.bankName}) must have valid latitude and longitude configured in their facility profile.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Additional Clinical / Cold-Chain Manifest Details */}
+                {isDispatch ? (
+                  <div className="p-3.5 bg-purple-50/60 rounded-xl border border-purple-200 text-xs space-y-2">
+                    <div className="flex items-center space-x-2">
+                      <Thermometer className="w-4 h-4 text-purple-700" />
+                      <strong className="text-purple-950 font-bold text-xs">Cold-Chain Protocol & Handover Status</strong>
+                    </div>
+                    {route.dispatch ? (
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-purple-900">
+                        <div>Courier: <strong>{route.dispatch.courierName || route.dispatch.courierReference || 'Direct Medical Transport'}</strong></div>
+                        <div>Target Temp: <strong>{route.dispatch.targetTempC || '+2°C to +6°C'}</strong></div>
+                        <div>Departure Temp: <strong>{route.dispatch.temperatureAtDispatch ? `${route.dispatch.temperatureAtDispatch}°C` : 'Verified within range'}</strong></div>
+                        <div>Status: <strong className="uppercase">{route.dispatch.status}</strong></div>
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-purple-700 italic">
+                        No blood dispatch manifest created yet. Once the Blood Center reserves units and prepares packaging, transit parameters will appear here.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-3.5 bg-blue-50/60 rounded-xl border border-blue-200 text-xs space-y-2">
+                    <div className="flex items-center space-x-2">
+                      <TestTube className="w-4 h-4 text-blue-700" />
+                      <strong className="text-blue-950 font-bold text-xs">Pre-Transfusion Sample Manifest ({route.samples.length} Samples)</strong>
+                    </div>
+                    {route.samples.length > 0 ? (
+                      <div className="divide-y divide-blue-100 text-[11px] text-blue-900">
+                        {route.samples.map(s => (
+                          <div key={s.id} className="py-1.5 flex justify-between items-center">
+                            <div>
+                              <span className="font-mono font-bold">{s.id}</span>
+                              <span className="text-blue-700 ml-2">Type: {s.sampleType}</span>
+                              <span className="text-slate-500 ml-2">Patient Ref: {s.patientReferenceId}</span>
+                            </div>
+                            <span className="px-2 py-0.5 rounded font-bold bg-blue-100 text-blue-800 text-[10px]">
+                              {s.status}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-blue-700 italic">
+                        No patient samples linked to this requisition yet. Use 'Submit Sample' to register cross-matching specimens.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-between items-center">
+                <span className="text-[11px] text-slate-500">
+                  {route.hasCoordinates ? `Genuine coordinates verified: ${route.hospName} ↔ ${route.bankName}` : 'Please update facility coordinates to view route on map.'}
+                </span>
+                <button
+                  onClick={() => setShowRouteModal(false)}
+                  className="px-4 py-2 bg-slate-800 text-white rounded-xl text-xs font-bold hover:bg-slate-900 cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );
