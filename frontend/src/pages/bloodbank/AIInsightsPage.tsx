@@ -155,35 +155,43 @@ export const AIInsightsPage: React.FC = () => {
           <h3 className="font-bold text-sm text-slate-900">Smart Voluntary Donation Campaign Recommendations</h3>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {campaigns.map((c) => (
-            <div key={c.id} className="bg-slate-50 rounded-2xl border border-slate-200 p-5 space-y-3">
-              <div className="flex justify-between items-start">
-                <div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-rose-600 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
-                    Urgency: {c.urgency}
+        {campaigns.length === 0 ? (
+          <div className="bg-slate-50 rounded-2xl border border-slate-200 p-8 text-center text-slate-500">
+            <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
+            <p className="font-bold text-slate-800 text-sm">Inventory Levels Balanced</p>
+            <p className="text-xs text-slate-500 mt-1">All blood groups currently satisfy operational buffer thresholds. No emergency mobilization campaigns required at this time.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {campaigns.map((c) => (
+              <div key={c.id} className="bg-slate-50 rounded-2xl border border-slate-200 p-5 space-y-3">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-rose-600 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                      Urgency: {c.urgency}
+                    </span>
+                    <h4 className="font-bold text-base text-slate-900 mt-1">{c.title}</h4>
+                  </div>
+                  <span className="w-8 h-8 rounded-lg bg-blood-600 text-white font-extrabold text-xs flex items-center justify-center">
+                    {c.bloodGroup}
                   </span>
-                  <h4 className="font-bold text-base text-slate-900 mt-1">{c.title}</h4>
                 </div>
-                <span className="w-8 h-8 rounded-lg bg-blood-600 text-white font-extrabold text-xs flex items-center justify-center">
-                  {c.bloodGroup}
-                </span>
-              </div>
 
-              <p className="text-xs text-slate-600 leading-relaxed">{c.reasoning}</p>
+                <p className="text-xs text-slate-600 leading-relaxed">{c.reasoning}</p>
 
-              <div className="pt-2 flex items-center justify-between text-xs text-slate-500 border-t border-slate-200">
-                <span>Target Location: <strong>{c.suggestedLocation}</strong></span>
-                <button
-                  onClick={handleDeployCampaign}
-                  className="px-3.5 py-1.5 rounded-xl font-bold text-xs text-white bg-blood-600 hover:bg-blood-700 shadow-sm transition-all"
-                >
-                  {c.actionButtonText}
-                </button>
+                <div className="pt-2 flex items-center justify-between text-xs text-slate-500 border-t border-slate-200">
+                  <span>Target Location: <strong>{c.suggestedLocation}</strong></span>
+                  <button
+                    onClick={handleDeployCampaign}
+                    className="px-3.5 py-1.5 rounded-xl font-bold text-xs text-white bg-blood-600 hover:bg-blood-700 shadow-sm transition-all"
+                  >
+                    {c.actionButtonText}
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <DisclaimerBanner />

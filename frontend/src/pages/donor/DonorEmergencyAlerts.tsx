@@ -7,7 +7,6 @@ import { OSMMap, MapMarker } from '../../components/common/OSMMap';
 import { LocationSearchInput, LocationSuggestion } from '../../components/common/LocationSearchInput';
 import { AlertTriangle, MapPin, Clock, CheckCircle2, Shield, BellOff, Map, Crosshair, Navigation, Share2 } from 'lucide-react';
 import { checkAlertCompatibility } from '../../utils/bloodCompatibility';
-import { VERIFIED_DONOR_BLOOD_GROUP } from '../../utils/donorIntegrity';
 
 const calculateHaversineDistanceKm = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
   const R = 6371; // Earth radius in km
@@ -23,7 +22,7 @@ const calculateHaversineDistanceKm = (lat1: number, lon1: number, lat2: number, 
 
 export const DonorEmergencyAlerts: React.FC = () => {
   const { user } = useAuth();
-  const donorBloodGroup = user?.bloodGroup || VERIFIED_DONOR_BLOOD_GROUP;
+  const donorBloodGroup = user?.bloodGroup || 'Unspecified';
   const [alerts, setAlerts] = useState<EmergencyAlert[]>([]);
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [showMap, setShowMap] = useState(true);
@@ -94,23 +93,25 @@ export const DonorEmergencyAlerts: React.FC = () => {
   };
 
   // Map markers & calculated distances
-  const mapMarkers: MapMarker[] = alerts.map(alert => {
-    const lat = alert.latitude || 40.7484;
-    const lng = alert.longitude || -73.9857;
-    const distance = userLocation 
-      ? calculateHaversineDistanceKm(userLocation.lat, userLocation.lng, lat, lng)
-      : alert.distanceKmApprox || 3.2;
+  const mapMarkers: MapMarker[] = alerts
+    .filter(alert => typeof alert.latitude === 'number' && typeof alert.longitude === 'number')
+    .map(alert => {
+      const lat = alert.latitude!;
+      const lng = alert.longitude!;
+      const distance = userLocation 
+        ? calculateHaversineDistanceKm(userLocation.lat, userLocation.lng, lat, lng)
+        : alert.distanceKmApprox;
 
-    return {
-      id: alert.id,
-      lat,
-      lng,
-      title: `${alert.bloodGroup} ${alert.component} - ${alert.hospitalName}`,
-      address: `${alert.unitsRequired} Units needed in ${alert.city} (~${distance} km away)`,
-      type: 'hospital',
-      isUrgent: true
-    };
-  });
+      return {
+        id: alert.id,
+        lat,
+        lng,
+        title: `${alert.bloodGroup} ${alert.component} - ${alert.hospitalName}`,
+        address: `${alert.unitsRequired} Units needed in ${alert.city}${distance !== undefined ? ` (~${distance} km away)` : ''}`,
+        type: 'hospital',
+        isUrgent: true
+      };
+    });
 
   if (userLocation) {
     mapMarkers.unshift({
@@ -223,11 +224,10 @@ export const DonorEmergencyAlerts: React.FC = () => {
           </div>
         ) : (
           alerts.map(alert => {
-            const lat = alert.latitude || 40.7484;
-            const lng = alert.longitude || -73.9857;
-            const distKm = userLocation 
-              ? calculateHaversineDistanceKm(userLocation.lat, userLocation.lng, lat, lng)
-              : alert.distanceKmApprox || 3.2;
+            const hasCoords = typeof alert.latitude === 'number' && typeof alert.longitude === 'number';
+            const distKm = userLocation && hasCoords
+              ? calculateHaversineDistanceKm(userLocation.lat, userLocation.lng, alert.latitude!, alert.longitude!)
+              : alert.distanceKmApprox;
 
             return (
               <div 
@@ -297,7 +297,7 @@ export const DonorEmergencyAlerts: React.FC = () => {
                   <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600">
                     <div className="flex items-center space-x-1.5">
                       <MapPin className="w-4 h-4 text-slate-400" />
-                      <span>~{distKm} km away in {alert.city}</span>
+                      <span>{distKm !== undefined ? `~${distKm} km away in ${alert.city}` : alert.city ? `Located in ${alert.city}` : 'Regional Center'}</span>
                     </div>
                     <div className="flex items-center space-x-1.5">
                       <Clock className="w-4 h-4 text-slate-400" />

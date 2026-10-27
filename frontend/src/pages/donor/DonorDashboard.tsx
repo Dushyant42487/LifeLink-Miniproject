@@ -27,7 +27,7 @@ import {
 import { Link, useNavigate } from 'react-router-dom';
 import { CampRequest } from '../../types';
 import { calculateAuthoritativeMetrics } from '../../utils/donorMetrics';
-import { DONOR_MOCK_HISTORY_FIXTURE, checkBloodGroupDiscrepancy, VERIFIED_DONOR_BLOOD_GROUP } from '../../utils/donorIntegrity';
+import { checkBloodGroupDiscrepancy } from '../../utils/donorIntegrity';
 import { checkAlertCompatibility } from '../../utils/bloodCompatibility';
 
 export const DonorDashboard: React.FC = () => {
@@ -104,7 +104,7 @@ export const DonorDashboard: React.FC = () => {
   const isVerified = verificationStatus === 'Verified';
 
   const donorName = user?.name || 'Valued Donor';
-  const bloodGroup = eligibility?.bloodGroup || user?.bloodGroup || VERIFIED_DONOR_BLOOD_GROUP;
+  const bloodGroup = eligibility?.bloodGroup || user?.bloodGroup || 'Unspecified';
   const savedRadiusKm = Number(donorProfile?.travelRadiusKm || (user as any)?.travelRadiusKm || 25);
 
   // Authoritative metrics derived directly from history collection

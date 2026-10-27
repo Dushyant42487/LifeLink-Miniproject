@@ -94,6 +94,7 @@ export const getBloodBankDashboard = async (req: AuthenticatedRequest, res: Resp
   const rbcAvailable = availableUnits.filter(u => u.component === 'RBC').length;
   const plasmaAvailable = availableUnits.filter(u => u.component === 'Plasma').length;
   const plateletsAvailable = availableUnits.filter(u => u.component === 'Platelets').length;
+  const wholeBloodAvailable = availableUnits.filter(u => u.component === 'Whole Blood').length;
 
   const expiringSoon = availableUnits.filter(u => {
     const days = calculateDaysRemaining(u.expiryDate);
@@ -147,6 +148,7 @@ export const getBloodBankDashboard = async (req: AuthenticatedRequest, res: Resp
       rbcAvailable,
       plasmaAvailable,
       plateletsAvailable,
+      wholeBloodAvailable,
       expiringSoon,
       expiredUnits,
       reservedUnits,
@@ -1035,8 +1037,8 @@ export const getDonorVerificationQueue = async (req: AuthenticatedRequest, res: 
       if (bb?.city && d.city && d.city.toLowerCase() === bb.city.toLowerCase()) {
         return true;
       }
-      // If only one blood bank or default bank (bb-1)
-      return bankId === 'bb-1' || db.bloodBanks.length <= 1;
+      // If donor has no explicit assignment, check matching city or only single facility in system
+      return db.bloodBanks.length === 1;
     })
     .map(d => {
       const eligibility = syncDonorAuthoritativeEligibility(d);
@@ -1419,6 +1421,13 @@ export const recordBloodCollection = async (req: AuthenticatedRequest, res: Resp
     return res.status(422).json({
       success: false,
       error: `Donor ${donor.name} (${donor.id}) is not verified for blood donation. Donor verification must be completed prior to collection.`
+    });
+  }
+  const isWbCollection = !collectionType || collectionType === 'Whole Blood' || collectionType === 'In-House Phlebotomy' || collectionType === 'Mobile Camp';
+  if (isWbCollection && !eligibility.wholeBlood.isEligible) {
+    return res.status(422).json({
+      success: false,
+      error: `Donor ${donor.name} (${donor.id}) is deferred from whole blood donation. Reason: ${eligibility.deferralReason || 'Clinical cool-off window active'}`
     });
   }
   if (!eligibility.isEligible) {
@@ -4539,6 +4548,9 @@ export const acceptCampRequest = async (req: AuthenticatedRequest, res: Response
   await safeSupabaseSync();
   const bb = resolveBloodBank(req);
   const bankId = bb?.id || req.user?.id;
+  if (!bankId) {
+    return res.status(401).json({ success: false, error: 'Unauthorized blood bank facility' });
+  }
   const bankName = bb?.bloodBankName || bb?.name || 'Regional Blood Center';
   const { id } = req.params;
   const { scheduledDate, timeSlot, notes } = req.body;
@@ -4574,7 +4586,7 @@ export const acceptCampRequest = async (req: AuthenticatedRequest, res: Response
     id: `CAMP-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
     title: `${campReq.organizationName} Blood Donation Drive`,
     organizer: campReq.organizationName,
-    bloodBankId: bankId || 'bb-1',
+    bloodBankId: bankId,
     location: campReq.venueAddress,
     city: campReq.city,
     address: campReq.venueAddress,

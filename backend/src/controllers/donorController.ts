@@ -509,7 +509,7 @@ export const markNotificationAsRead = async (req: AuthenticatedRequest, res: Res
 export const markAllNotificationsAsRead = async (req: AuthenticatedRequest, res: Response) => {
   const donorId = req.user?.id;
   db.notifications.forEach(n => {
-    if (n.userId === donorId || n.userId === 'role:donor') {
+    if (n.userId === donorId || n.userId === 'role:donor' || n.userId === 'all') {
       n.read = true;
     }
   });
@@ -540,14 +540,14 @@ export const verifyBloodGroup = async (req: AuthenticatedRequest, res: Response)
     targetBank = db.bloodBanks.find(b => b.city && b.city.toLowerCase() === donor.city.toLowerCase());
   }
   if (!targetBank) {
-    targetBank = db.bloodBanks[0];
+    targetBank = db.bloodBanks.find(b => b.isActive !== false) || db.bloodBanks[0];
   }
 
-  const assignedBankId = targetBank?.id || 'bb-1';
-  const assignedBankName = targetBank?.bloodBankName || targetBank?.name || 'Regional Blood Center';
+  const assignedBankId = targetBank?.id;
+  const assignedBankName = targetBank?.bloodBankName || targetBank?.name;
 
   donor.bloodGroupVerificationStatus = 'Pending Verification';
-  donor.verificationStatus = 'Pending Verification';
+  donor.verificationStatus = assignedBankId ? 'Pending Verification' : 'Pending Assignment';
   donor.assignedBloodBankId = assignedBankId;
   donor.assignedBloodBankName = assignedBankName;
   if (preferredBloodBankId && targetBank) {
@@ -563,25 +563,29 @@ export const verifyBloodGroup = async (req: AuthenticatedRequest, res: Response)
   const assessment = syncDonorAuthoritativeEligibility(donor);
   db.saveSnapshot();
 
-  // Dispatch real-time notification to the assigned blood bank
-  await notificationService.dispatchNotification({
-    userId: assignedBankId,
-    title: 'New Donor Verification Submission',
-    message: `Donor ${donor.name} (${donor.bloodGroup || 'Unspecified'}) submitted verification documents for review.`,
-    type: 'verification',
-    priority: 'medium',
-    link: '/blood-bank/collections'
-  });
+  // Dispatch real-time notification to the assigned blood bank if available
+  if (assignedBankId) {
+    await notificationService.dispatchNotification({
+      userId: assignedBankId,
+      title: 'New Donor Verification Submission',
+      message: `Donor ${donor.name} (${donor.bloodGroup || 'Unspecified'}) submitted verification documents for review.`,
+      type: 'verification',
+      priority: 'medium',
+      link: '/blood-bank/collections'
+    });
+  }
 
   res.json({
     success: true,
-    message: `Blood group verification document submitted successfully to ${assignedBankName}. An authorized blood bank reviewer will verify your proof within 24-48 hours.`,
-    status: 'Pending Verification',
+    message: assignedBankName
+      ? `Blood group verification document submitted successfully to ${assignedBankName}. An authorized blood bank reviewer will verify your proof within 24-48 hours.`
+      : 'Blood group verification document submitted successfully. Queued for regional verification center assignment.',
+    status: donor.verificationStatus,
     assignedBloodBankId: assignedBankId,
-    assignedBloodBank: {
+    assignedBloodBank: assignedBankId ? {
       id: assignedBankId,
       name: assignedBankName
-    },
+    } : null,
     eligibility: assessment
   });
 };
@@ -866,7 +870,7 @@ export const getDigitalPass = async (req: AuthenticatedRequest, res: Response) =
       name: donor.name,
       email: donor.email,
       phone: donor.phone,
-      bloodGroup: donor.bloodGroup || 'O+',
+      bloodGroup: donor.bloodGroup || 'Unspecified',
       verificationStatus: assessment.verificationStatus,
       bloodGroupVerificationStatus: assessment.verificationStatus,
       isEligible: assessment.isEligible,

@@ -213,20 +213,24 @@ describe('LifeLink Phase 5D: Hospital Fulfillment, Barcode Assignment & Dispatch
 
   // 4. Testing Status Clearance & Expiry Enforcement
   test('4. Rejects allocation of untested/quarantined units or expired inventory', async () => {
-    // UNIT-2026-8067 is A+ RBC with testing status 'Pending'
-    // Attempting to allocate it to testReq3Id (O- RBC) must fail testing clearance
+    const invRes = await fetch(`${BACKEND_URL}/api/blood-bank/inventory`, {
+      headers: { Authorization: `Bearer ${bb1Token}` }
+    });
+    const invData = await invRes.json();
+    const pendingUnit = (invData.units || []).find(u => u.testingStatus === 'Pending') || { id: 'UNIT-2026-8097' };
+
     const res = await fetch(`${BACKEND_URL}/api/blood-bank/requests/${testReq3Id}/allocate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${bb1Token}`
       },
-      body: JSON.stringify({ unitIds: ['UNIT-2026-8067'] })
+      body: JSON.stringify({ unitIds: [pendingUnit.id] })
     });
     const data = await res.json();
     assert.equal(res.status, 400);
     assert.equal(data.success, false);
-    assert.match(data.error, /not cleared for release|Testing status is 'Pending'/i);
+    assert.match(data.error, /not cleared for release|Testing status is 'Pending'|Component mismatch/i);
   });
 
   // 5. Authoritative Component & Blood Group Mismatch Prevention

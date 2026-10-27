@@ -24,7 +24,7 @@ router.post('/seed-fixtures', (req: Request, res: Response) => {
     return res.status(403).json({ success: false, error: 'Test endpoints disabled in production' });
   }
 
-  setSyncPaused(false);
+  setSyncPaused(true);
   db.clearAllData();
   db.seedTestFixtures();
   return res.json({

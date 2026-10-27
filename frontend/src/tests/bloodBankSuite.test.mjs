@@ -97,8 +97,8 @@ describe('LifeLink Phase 5A: Blood Bank Portal Audit & Core Workflow Repair', ()
     assert.equal(dash.metrics.totalUnits, nonExpiredAvailable.length, 'Dashboard totalUnits must equal available inventory count');
 
     // Component counts must sum to totalUnits
-    const componentSum = dash.metrics.rbcAvailable + dash.metrics.plasmaAvailable + dash.metrics.plateletsAvailable;
-    assert.equal(componentSum, dash.metrics.totalUnits, 'RBC + Plasma + Platelets must sum to totalUnits');
+    const componentSum = dash.metrics.rbcAvailable + dash.metrics.plasmaAvailable + dash.metrics.plateletsAvailable + (dash.metrics.wholeBloodAvailable || 0);
+    assert.equal(componentSum, dash.metrics.totalUnits, 'Component breakdown must sum to totalUnits');
 
     // Individual component counts match inventory breakdown
     const rbcCount = nonExpiredAvailable.filter(u => u.component === 'RBC').length;
@@ -434,7 +434,7 @@ describe('LifeLink Phase 5B: Blood Collections, Mobile Donation Camps & Componen
   test('3. Idempotency key prevents duplicate collection submission', async () => {
     const key = `idem-key-test-${Date.now()}`;
     const payload = {
-      donorId: 'donor-2',
+      donorId: 'donor-3',
       collectionType: 'In-House Phlebotomy',
       volumeMl: 350,
       collectionDate: new Date().toISOString().split('T')[0],
@@ -548,7 +548,7 @@ describe('LifeLink Phase 5B: Blood Collections, Mobile Donation Camps & Componen
         Authorization: `Bearer ${bbToken}`
       },
       body: JSON.stringify({
-        donorId: 'donor-3',
+        donorId: 'donor-4',
         collectionType: 'Mobile Camp',
         campId: createdCampId,
         volumeMl: 450,
@@ -685,7 +685,7 @@ describe('LifeLink Phase 5B: Blood Collections, Mobile Donation Camps & Componen
         Authorization: `Bearer ${bbToken}`
       },
       body: JSON.stringify({
-        donorId: 'donor-4',
+        donorId: 'donor-6',
         volumeMl: 350,
         collectionDate: new Date().toISOString().split('T')[0]
       })

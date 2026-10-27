@@ -4,7 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { StatCard } from '../../components/common/StatCard';
 import { History, Heart, Droplet, Award, CheckCircle2, FileText, Download, XCircle, Printer, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { calculateAuthoritativeMetrics } from '../../utils/donorMetrics';
-import { checkBloodGroupDiscrepancy, VERIFIED_DONOR_BLOOD_GROUP } from '../../utils/donorIntegrity';
+import { checkBloodGroupDiscrepancy } from '../../utils/donorIntegrity';
 
 export const DonorHistory: React.FC = () => {
   const { user } = useAuth();
@@ -15,7 +15,7 @@ export const DonorHistory: React.FC = () => {
   const [reportNote, setReportNote] = useState('');
   const [reportSubmitted, setReportSubmitted] = useState(false);
 
-  const donorBloodGroup = user?.bloodGroup || VERIFIED_DONOR_BLOOD_GROUP;
+  const donorBloodGroup = user?.bloodGroup || 'Unspecified';
 
   useEffect(() => {
     const fetchHistory = async () => {

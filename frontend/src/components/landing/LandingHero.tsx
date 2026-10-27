@@ -118,7 +118,7 @@ export const LandingHero: React.FC = () => {
                   <p className="font-bold text-slate-900 text-xs">Digital Certificate</p>
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                 </div>
-                <p className="text-[11px] text-slate-500">Verified Voluntary Donor #LL-8924</p>
+                <p className="text-[11px] text-slate-500">Verified Voluntary Donor (Credential Preview)</p>
               </div>
             </div>
 
@@ -225,7 +225,7 @@ export const LandingHero: React.FC = () => {
                       </span>
                       <div>
                         <p className="font-semibold text-slate-800 text-xs">Trauma Center Requisition</p>
-                        <p className="text-[10px] text-slate-400">Req #REQ-1327 · 2 Units RBC</p>
+                        <p className="text-[10px] text-slate-400">Emergency Protocol · 2 Units RBC</p>
                       </div>
                     </div>
                     <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
@@ -241,7 +241,7 @@ export const LandingHero: React.FC = () => {
                       </span>
                       <div>
                         <p className="font-semibold text-slate-800 text-xs">Elective Surgery Reserve</p>
-                        <p className="text-[10px] text-slate-400">Req #REQ-1326 · Cross-Matched</p>
+                        <p className="text-[10px] text-slate-400">Scheduled Procedure · Cross-Matched</p>
                       </div>
                     </div>
                     <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">

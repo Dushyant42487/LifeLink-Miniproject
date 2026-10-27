@@ -83,7 +83,7 @@ export function sanitizeRecord(tableName: string, record: any): any {
   if (tableName === 'donors') {
     if (!sanitized.dob) sanitized.dob = '2000-01-01';
     if (!sanitized.gender) sanitized.gender = 'Unspecified';
-    if (!sanitized.bloodGroup) sanitized.bloodGroup = 'O+';
+    if (!sanitized.bloodGroup) sanitized.bloodGroup = 'Unspecified';
     if (sanitized.isEligible === undefined) sanitized.isEligible = false;
     if (sanitized.totalDonationsCount === undefined) sanitized.totalDonationsCount = 0;
     if (sanitized.totalVolumeMl === undefined) sanitized.totalVolumeMl = 0;
@@ -237,17 +237,11 @@ export const safeSupabaseSync = async (force: boolean = false) => {
       if (hospRes.data && hospRes.data.length > 0) {
         for (const remoteHosp of hospRes.data) {
           const idx = inMemoryDb.hospitals.findIndex(h => h.id === remoteHosp.id);
+          const chosenLat = remoteHosp.latitude !== undefined && remoteHosp.latitude !== null ? Number(remoteHosp.latitude) : undefined;
+          const chosenLng = remoteHosp.longitude !== undefined && remoteHosp.longitude !== null ? Number(remoteHosp.longitude) : undefined;
+
           if (idx >= 0) {
             const local = inMemoryDb.hospitals[idx];
-            const isSangli = (remoteHosp.city && remoteHosp.city.toLowerCase().includes('sangli')) || (local.city && local.city.toLowerCase().includes('sangli')) || remoteHosp.id === 'user-1792574656930';
-            const remoteIsNyc = Math.abs(Number(remoteHosp.latitude) - 40.7128) < 0.05 && Math.abs(Number(remoteHosp.longitude) - (-74.006)) < 0.05;
-            const chosenLat = (isSangli && remoteIsNyc && local.latitude && local.latitude < 30)
-              ? local.latitude
-              : (remoteHosp.latitude !== undefined && remoteHosp.latitude !== null ? Number(remoteHosp.latitude) : local.latitude);
-            const chosenLng = (isSangli && remoteIsNyc && local.longitude && local.longitude > 60)
-              ? local.longitude
-              : (remoteHosp.longitude !== undefined && remoteHosp.longitude !== null ? Number(remoteHosp.longitude) : local.longitude);
-
             inMemoryDb.hospitals[idx] = {
               ...local,
               ...remoteHosp,
@@ -256,21 +250,17 @@ export const safeSupabaseSync = async (force: boolean = false) => {
               address: remoteHosp.address !== undefined ? remoteHosp.address : local.address,
               city: remoteHosp.city !== undefined ? remoteHosp.city : local.city,
               state: remoteHosp.state !== undefined ? remoteHosp.state : local.state,
+              latitude: chosenLat !== undefined ? chosenLat : local.latitude,
+              longitude: chosenLng !== undefined ? chosenLng : local.longitude,
+              verificationStatus: remoteHosp.verificationStatus || local.verificationStatus || 'Pending Verification'
+            };
+          } else {
+            inMemoryDb.hospitals.push({
+              ...remoteHosp,
               latitude: chosenLat,
               longitude: chosenLng,
-              verificationStatus: remoteHosp.verificationStatus || local.verificationStatus || 'Verified'
-            };
-            if (remoteHosp.id === 'hosp-unconfigured') {
-              inMemoryDb.hospitals[idx].latitude = undefined;
-              inMemoryDb.hospitals[idx].longitude = undefined;
-            }
-          } else {
-            const h = { ...remoteHosp };
-            if (h.id === 'hosp-unconfigured') {
-              h.latitude = undefined;
-              h.longitude = undefined;
-            }
-            inMemoryDb.hospitals.push(h);
+              verificationStatus: remoteHosp.verificationStatus || 'Pending Verification'
+            });
           }
         }
       }
@@ -278,17 +268,11 @@ export const safeSupabaseSync = async (force: boolean = false) => {
       if (bbRes.data && bbRes.data.length > 0) {
         for (const remoteBb of bbRes.data) {
           const idx = inMemoryDb.bloodBanks.findIndex(b => b.id === remoteBb.id);
+          const chosenLat = remoteBb.latitude !== undefined && remoteBb.latitude !== null ? Number(remoteBb.latitude) : undefined;
+          const chosenLng = remoteBb.longitude !== undefined && remoteBb.longitude !== null ? Number(remoteBb.longitude) : undefined;
+
           if (idx >= 0) {
             const local = inMemoryDb.bloodBanks[idx];
-            const isSangli = (remoteBb.city && remoteBb.city.toLowerCase().includes('sangli')) || (local.city && local.city.toLowerCase().includes('sangli')) || remoteBb.id === 'user-1792415991634' || remoteBb.id === 'user-1792574733075';
-            const remoteIsNyc = Math.abs(Number(remoteBb.latitude) - 40.7128) < 0.05 && Math.abs(Number(remoteBb.longitude) - (-74.006)) < 0.05;
-            const chosenLat = (isSangli && remoteIsNyc && local.latitude && local.latitude < 30)
-              ? local.latitude
-              : (remoteBb.latitude !== undefined && remoteBb.latitude !== null ? Number(remoteBb.latitude) : local.latitude);
-            const chosenLng = (isSangli && remoteIsNyc && local.longitude && local.longitude > 60)
-              ? local.longitude
-              : (remoteBb.longitude !== undefined && remoteBb.longitude !== null ? Number(remoteBb.longitude) : local.longitude);
-
             inMemoryDb.bloodBanks[idx] = {
               ...local,
               ...remoteBb,
@@ -297,13 +281,19 @@ export const safeSupabaseSync = async (force: boolean = false) => {
               address: remoteBb.address !== undefined ? remoteBb.address : local.address,
               city: remoteBb.city !== undefined ? remoteBb.city : local.city,
               state: remoteBb.state !== undefined ? remoteBb.state : local.state,
-              latitude: chosenLat,
-              longitude: chosenLng,
+              latitude: chosenLat !== undefined ? chosenLat : local.latitude,
+              longitude: chosenLng !== undefined ? chosenLng : local.longitude,
               isActive: remoteBb.isActive !== undefined ? remoteBb.isActive : (local.isActive !== undefined ? local.isActive : true),
               verificationStatus: remoteBb.verificationStatus || local.verificationStatus || 'Verified'
             };
           } else {
-            inMemoryDb.bloodBanks.push(remoteBb);
+            inMemoryDb.bloodBanks.push({
+              ...remoteBb,
+              latitude: chosenLat,
+              longitude: chosenLng,
+              isActive: remoteBb.isActive !== undefined ? remoteBb.isActive : true,
+              verificationStatus: remoteBb.verificationStatus || 'Verified'
+            });
           }
         }
       }

@@ -1,48 +1,43 @@
-import { supabase } from '../models/db';
 import { Request, Response } from 'express';
 import { db } from '../models/store';
 import { BloodGroup, BloodComponent, DemandPrediction, RiskLevel, ExpiryRiskItem } from '../models/types';
 
 export const getDemandForecast = async (req: Request, res: Response) => {
-
-  // Sync with Supabase (Minimal Migration)
-  const { data: __bu } = await supabase.from('blood_units').select('*');
-  if (__bu) db.bloodUnits = __bu;
-  const { data: __br } = await supabase.from('blood_requests').select('*');
-  if (__br) db.bloodRequests = __br;
-  const { data: __don } = await supabase.from('donors').select('*');
-  if (__don) db.donors = __don;
-  const { data: __hosp } = await supabase.from('hospitals').select('*');
-  if (__hosp) db.hospitals = __hosp;
-  const { data: __bb } = await supabase.from('blood_banks').select('*');
-  if (__bb) db.bloodBanks = __bb;
-
   const period = (req.query.period as string) || '7 days';
 
   const groups: BloodGroup[] = ['O-', 'O+', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'];
-  const components: BloodComponent[] = ['RBC', 'Plasma', 'Platelets'];
-
   const inventorySummary = db.getAvailableInventoryByGroup();
 
+  const periodMultiplier = period === '90 days' ? 12 : period === '30 days' ? 4 : 1;
+
   const predictions: DemandPrediction[] = groups.map(bg => {
-    // Demo logic: O- has severe shortage risk
-    let multiplier = period === '90 days' ? 12 : period === '30 days' ? 4 : 1;
-    let baseDemand = bg === 'O-' ? 14 : bg === 'O+' ? 22 : bg === 'A+' ? 18 : bg === 'B+' ? 16 : 8;
+    // Derive historical demand from persisted requests for this blood group
+    const historicalRequests = db.bloodRequests.filter(r => r.bloodGroup === bg);
+    const requestedUnitsTotal = historicalRequests.reduce((sum, r) => sum + (Number(r.quantityUnits) || 1), 0);
     
-    let predictedDemandUnits = Math.round(baseDemand * multiplier);
-    let currentStock = inventorySummary[bg]?.availableUnits || 0;
-    let historicalAvg = Math.round(predictedDemandUnits * 0.85);
+    // Baseline weekly operational consumption per group
+    const baseDemand = requestedUnitsTotal > 0 
+      ? Math.max(2, Math.ceil(requestedUnitsTotal / Math.max(1, db.bloodRequests.length / 10))) 
+      : 5;
+    
+    const predictedDemandUnits = Math.round(baseDemand * periodMultiplier);
+    const currentStock = inventorySummary[bg]?.availableUnits || 0;
+    const historicalAvg = Math.round(predictedDemandUnits * 0.85);
 
     let shortageRisk: RiskLevel = 'Low';
-    if (bg === 'O-') shortageRisk = 'Critical';
-    else if (currentStock < predictedDemandUnits * 0.5) shortageRisk = 'High';
-    else if (currentStock < predictedDemandUnits * 0.8) shortageRisk = 'Medium';
+    if (currentStock === 0 || currentStock < Math.ceil(predictedDemandUnits * 0.25)) {
+      shortageRisk = 'Critical';
+    } else if (currentStock < Math.ceil(predictedDemandUnits * 0.5)) {
+      shortageRisk = 'High';
+    } else if (currentStock < Math.ceil(predictedDemandUnits * 0.8)) {
+      shortageRisk = 'Medium';
+    }
 
-    let wastageRisk: RiskLevel = bg === 'AB-' ? 'Medium' : 'Low';
+    const wastageRisk: RiskLevel = currentStock > predictedDemandUnits * 2 ? 'Medium' : 'Low';
 
     let recommendation = '';
     if (shortageRisk === 'Critical') {
-      recommendation = `CRITICAL: Immediate targeted blood donation drive recommended for ${bg}. Demand exceeds current stock by ${predictedDemandUnits - currentStock} units.`;
+      recommendation = `CRITICAL: Immediate targeted blood donation drive recommended for ${bg}. Demand exceeds current stock by ${Math.max(1, predictedDemandUnits - currentStock)} units.`;
     } else if (shortageRisk === 'High') {
       recommendation = `ALERT: Inventory for ${bg} is approaching critical threshold. Schedule voluntary collection camp within 48 hours.`;
     } else {
@@ -58,13 +53,11 @@ export const getDemandForecast = async (req: Request, res: Response) => {
       historicalDemandAvg: historicalAvg,
       shortageRisk,
       wastageRisk,
-      confidenceScore: bg === 'O-' ? 0.94 : 0.89,
+      confidenceScore: 0.88,
       generatedAt: new Date().toISOString(),
       recommendation
     };
   });
-
-
 
   res.json({
     success: true,
@@ -75,32 +68,28 @@ export const getDemandForecast = async (req: Request, res: Response) => {
 };
 
 export const getShortageRisk = async (req: Request, res: Response) => {
-
-  // Sync with Supabase (Minimal Migration)
-  const { data: __bu } = await supabase.from('blood_units').select('*');
-  if (__bu) db.bloodUnits = __bu;
-  const { data: __br } = await supabase.from('blood_requests').select('*');
-  if (__br) db.bloodRequests = __br;
-  const { data: __don } = await supabase.from('donors').select('*');
-  if (__don) db.donors = __don;
-  const { data: __hosp } = await supabase.from('hospitals').select('*');
-  if (__hosp) db.hospitals = __hosp;
-  const { data: __bb } = await supabase.from('blood_banks').select('*');
-  if (__bb) db.bloodBanks = __bb;
-
   const inventorySummary = db.getAvailableInventoryByGroup();
   const groups: BloodGroup[] = ['O-', 'O+', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'];
 
   const risks = groups.map(bg => {
-    const stock = inventorySummary[bg]?.availableUnits || 0;
     const rbc = inventorySummary[bg]?.rbc || 0;
+    const totalAvailable = inventorySummary[bg]?.availableUnits || 0;
     
-    let predictedDemand = bg === 'O-' ? 15 : bg === 'O+' ? 20 : 10;
+    // Check active open requests for this blood group
+    const activeRequests = db.bloodRequests.filter(
+      r => r.bloodGroup === bg && (r.status === 'Pending' || r.status === 'Under Review' || r.status === 'Partially Fulfilled')
+    );
+    const pendingDemandUnits = activeRequests.reduce((sum, r) => sum + (Number(r.quantityUnits) || 1), 0);
+    const predictedDemand = Math.max(pendingDemandUnits, 5);
+
     let riskLevel: RiskLevel = 'Low';
-    
-    if (bg === 'O-' || rbc <= 2) riskLevel = 'Critical';
-    else if (rbc <= 5) riskLevel = 'High';
-    else if (rbc <= 8) riskLevel = 'Medium';
+    if (rbc === 0 || (totalAvailable < pendingDemandUnits && pendingDemandUnits > 0)) {
+      riskLevel = 'Critical';
+    } else if (rbc <= 3) {
+      riskLevel = 'High';
+    } else if (rbc <= 6) {
+      riskLevel = 'Medium';
+    }
 
     return {
       bloodGroup: bg,
@@ -110,33 +99,22 @@ export const getShortageRisk = async (req: Request, res: Response) => {
       riskLevel,
       predictedShortageDate: riskLevel === 'Critical' ? 'Within 24 Hours' : riskLevel === 'High' ? '3 Days' : '10+ Days',
       explanation: riskLevel === 'Critical' 
-        ? 'Predicted hospital emergency demand exceeds available RBC stock.'
+        ? `Available RBC stock (${rbc} units) is severely deficient relative to active hospital demand (${pendingDemandUnits} units).`
+        : riskLevel === 'High'
+        ? `Stock levels (${rbc} units) are approaching minimum buffer reserves.`
         : 'Stock levels within standard operational threshold.',
       recommendedAction: riskLevel === 'Critical' 
-        ? 'Initiate emergency O- donor mobilization alert and request inter-bank transfer.'
+        ? `Initiate emergency ${bg} donor mobilization alert and request inter-bank transfer.`
+        : riskLevel === 'High'
+        ? `Schedule targeted ${bg} collection drive.`
         : 'Maintain routine voluntary collection schedule.'
     };
   });
-
-
 
   res.json({ success: true, shortageRisks: risks });
 };
 
 export const getWastageRisk = async (req: Request, res: Response) => {
-
-  // Sync with Supabase (Minimal Migration)
-  const { data: __bu } = await supabase.from('blood_units').select('*');
-  if (__bu) db.bloodUnits = __bu;
-  const { data: __br } = await supabase.from('blood_requests').select('*');
-  if (__br) db.bloodRequests = __br;
-  const { data: __don } = await supabase.from('donors').select('*');
-  if (__don) db.donors = __don;
-  const { data: __hosp } = await supabase.from('hospitals').select('*');
-  if (__hosp) db.hospitals = __hosp;
-  const { data: __bb } = await supabase.from('blood_banks').select('*');
-  if (__bb) db.bloodBanks = __bb;
-
   const now = new Date();
 
   // Find units at risk of expiring before consumption
@@ -174,8 +152,6 @@ export const getWastageRisk = async (req: Request, res: Response) => {
     })
     .filter(item => item.riskLevel === 'High' || item.riskLevel === 'Critical');
 
-
-
   res.json({
     success: true,
     totalAtRisk: unitsAtRisk.length,
@@ -184,45 +160,54 @@ export const getWastageRisk = async (req: Request, res: Response) => {
 };
 
 export const getCampaignRecommendations = async (req: Request, res: Response) => {
+  const inventorySummary = db.getAvailableInventoryByGroup();
+  const groups: BloodGroup[] = ['O-', 'O+', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'];
 
-  // Sync with Supabase (Minimal Migration)
-  const { data: __bu } = await supabase.from('blood_units').select('*');
-  if (__bu) db.bloodUnits = __bu;
-  const { data: __br } = await supabase.from('blood_requests').select('*');
-  if (__br) db.bloodRequests = __br;
-  const { data: __don } = await supabase.from('donors').select('*');
-  if (__don) db.donors = __don;
-  const { data: __hosp } = await supabase.from('hospitals').select('*');
-  if (__hosp) db.hospitals = __hosp;
-  const { data: __bb } = await supabase.from('blood_banks').select('*');
-  if (__bb) db.bloodBanks = __bb;
+  const recommendations: Array<{
+    id: string;
+    title: string;
+    bloodGroup: BloodGroup;
+    urgency: 'Critical' | 'High' | 'Medium';
+    predictedShortageDays: number;
+    targetUnits: number;
+    suggestedLocation: string;
+    reasoning: string;
+    actionButtonText: string;
+  }> = [];
 
-  const recommendations = [
-    {
-      id: 'REC-1',
-      title: 'Targeted O-Negative Emergency Mobilization',
-      bloodGroup: 'O-',
-      urgency: 'Critical',
-      predictedShortageDays: 2,
-      targetUnits: 30,
-      suggestedLocation: 'Downtown Financial Center & Metro University',
-      reasoning: 'O- Negative stock is down to 2 units while trauma request frequency has surged 35% this week.',
-      actionButtonText: 'Deploy Emergency Alert to Donors'
-    },
-    {
-      id: 'REC-2',
-      title: 'Weekend Corporate Platelet & Whole Blood Drive',
-      bloodGroup: 'A+',
-      urgency: 'Medium',
-      predictedShortageDays: 7,
-      targetUnits: 100,
-      suggestedLocation: 'Tech Park Campus Plaza',
-      reasoning: 'Elective cardiac procedures scheduled next week require 25+ units of A+ RBC.',
-      actionButtonText: 'Create Donation Camp'
+  // Generate recommendations dynamically based on actual low stock or urgent requests
+  for (const bg of groups) {
+    const available = inventorySummary[bg]?.availableUnits || 0;
+    const activeEmergencyRequests = db.bloodRequests.filter(
+      r => r.bloodGroup === bg && (r.status === 'Pending' || r.status === 'Under Review' || r.status === 'Partially Fulfilled') && r.urgency === 'Emergency'
+    );
+
+    if (available <= 2 || activeEmergencyRequests.length > 0) {
+      recommendations.push({
+        id: `REC-${bg}`,
+        title: `Targeted ${bg} Emergency Mobilization`,
+        bloodGroup: bg,
+        urgency: available <= 1 || activeEmergencyRequests.length > 0 ? 'Critical' : 'High',
+        predictedShortageDays: available <= 1 ? 1 : 3,
+        targetUnits: Math.max(20, (6 - available) * 5),
+        suggestedLocation: 'Regional Central Blood Bank & Collection Centers',
+        reasoning: `Persisted available inventory for ${bg} is at ${available} unit(s) with ${activeEmergencyRequests.length} active emergency requisition(s).`,
+        actionButtonText: 'Deploy Emergency Alert to Donors'
+      });
+    } else if (available <= 5) {
+      recommendations.push({
+        id: `REC-${bg}`,
+        title: `Voluntary ${bg} Buffer Replenishment Drive`,
+        bloodGroup: bg,
+        urgency: 'Medium',
+        predictedShortageDays: 7,
+        targetUnits: 30,
+        suggestedLocation: 'Community Center / Institutional Camps',
+        reasoning: `Current stock of ${available} units is below recommended 7-day reserve threshold.`,
+        actionButtonText: 'Create Donation Camp'
+      });
     }
-  ];
-
-
+  }
 
   res.json({ success: true, recommendations });
 };

@@ -59,8 +59,10 @@ class DataStore {
   bloodDispatches: BloodDispatch[] = [];
 
   constructor() {
-    if (process.env.SEED_DEV_FIXTURES === 'true' || !this.loadSnapshot() || this.donors.length === 0) {
+    if (process.env.SEED_DEV_FIXTURES === 'true') {
       this.seedInitialData();
+    } else {
+      this.loadSnapshot();
     }
   }
 
@@ -93,74 +95,7 @@ class DataStore {
           this.coldStorageAlarms = data.coldStorageAlarms || [];
           this.bloodDispatches = data.bloodDispatches || [];
 
-          // Ensure integration test donor fixture is always available
-          if (!this.donors.find(d => d.id === 'donor-test-integ')) {
-            this.donors.push({
-              id: 'donor-test-integ',
-              email: 'integ-donor@lifelink.org',
-              passwordHash: '$2a$10$wT8vI8e0V/p48h1Y3bXgKe5NfR6tS7wY8h1Y3bXgKe5NfR6tS7wY8',
-              role: 'donor',
-              name: 'Integration Donor',
-              bloodGroup: 'O+',
-              dob: '1995-05-15',
-              gender: 'Male',
-              phone: '+1 555-0199',
-              address: '700 Broadway',
-              city: 'Metro City',
-              state: 'NY',
-              postalCode: '10003',
-              latitude: 40.7295,
-              longitude: -73.9937,
-              travelRadiusKm: 25,
-              emergencyContact: {
-                name: 'Jane Doe',
-                phone: '+1 555-0198',
-                relation: 'Spouse'
-              },
-              lastDonationDate: undefined,
-              weightKg: 68,
-              isEligible: false,
-              bloodGroupVerificationStatus: 'Unverified',
-              verificationStatus: 'Unverified',
-              totalDonationsCount: 0,
-              totalVolumeMl: 0,
-              notificationPreferences: {
-                emergencyAlerts: true,
-                campReminders: true,
-                eligibilityAlerts: true
-              },
-              createdAt: '2024-01-01T08:00:00Z'
-            });
-          }
-
-          // Ensure integration test unconfigured hospital fixture is available with undefined coordinates
-          const unconfigHosp = this.hospitals.find(h => h.id === 'hosp-unconfigured');
-          if (unconfigHosp) {
-            unconfigHosp.latitude = undefined;
-            unconfigHosp.longitude = undefined;
-          } else {
-            this.hospitals.push({
-              id: 'hosp-unconfigured',
-              email: 'rural@clinic.org',
-              passwordHash: '$2a$10$wT8vI8e0V/p48h1Y3bXgKe5NfR6tS7wY8h1Y3bXgKe5NfR6tS7wY8',
-              role: 'hospital',
-              name: 'Rural Outreach Clinic',
-              hospitalName: 'Rural Outreach Clinic',
-              licenseId: 'HOSP-NY-9999',
-              verificationStatus: 'Verified',
-              contactPerson: 'Dr. Jane Miller',
-              phone: '+1 (555) 999-0000',
-              emergencyPhone: '+1 (555) 911-0004',
-              address: '88 Unmapped Road',
-              city: 'Metro City',
-              state: 'NY',
-              latitude: undefined,
-              longitude: undefined,
-              createdAt: '2026-01-01T08:00:00Z'
-            });
-          }
-
-          // Ensure active and authorized verification flags on blood banks
+          // Ensure active and authorized verification flags on blood banks if loaded
           this.bloodBanks.forEach(b => {
             if (b.isActive === undefined) b.isActive = true;
             if (b.isAuthorizedForVerification === undefined) b.isAuthorizedForVerification = true;
@@ -345,6 +280,28 @@ class DataStore {
         isAuthorizedForVerification: true,
         serviceArea: 'Metro City North & Midtown',
         createdAt: '2024-03-01T08:00:00Z'
+      },
+      {
+        id: 'user-1792415991634',
+        email: 'wcebb@test.org',
+        passwordHash,
+        role: 'blood_bank',
+        name: 'WCE Sangli Blood Center',
+        bloodBankName: 'WCE Sangli Blood Center',
+        registrationId: 'BB-LIC-2024-WCE',
+        contactPerson: 'Dr. S. Kulkarni',
+        phone: '+91 233 230 2200',
+        emergencyPhone: '+91 233 230 2299',
+        address: 'Vishrambag, Sangli-Miraj Road',
+        city: 'Sangli',
+        state: 'Maharashtra',
+        latitude: 16.8440,
+        longitude: 74.6018,
+        isActive: true,
+        verificationStatus: 'Verified',
+        isAuthorizedForVerification: true,
+        serviceArea: 'Sangli-Miraj-Kupwad Municipal Corporation',
+        createdAt: '2024-01-15T08:00:00Z'
       }
     ];
 
@@ -425,6 +382,25 @@ class DataStore {
         latitude: undefined,
         longitude: undefined,
         createdAt: '2026-09-01T08:00:00Z'
+      },
+      {
+        id: 'user-1792574656930',
+        email: 'wcehosp@test.org',
+        passwordHash,
+        role: 'hospital',
+        name: 'WCE Memorial Hospital Sangli',
+        hospitalName: 'WCE Memorial Hospital Sangli',
+        licenseId: 'HOSP-MH-2024-WCE',
+        verificationStatus: 'Verified',
+        contactPerson: 'Dr. A. Patil',
+        phone: '+91 233 230 1100',
+        emergencyPhone: '+91 233 230 1199',
+        address: 'Vishrambag, Sangli-Miraj Road',
+        city: 'Sangli',
+        state: 'Maharashtra',
+        latitude: 16.8438,
+        longitude: 74.6015,
+        createdAt: '2024-01-10T08:00:00Z'
       }
     ];
 
@@ -469,11 +445,11 @@ class DataStore {
         weightKg: 68 + (index % 15),
         isEligible,
         deferralReason: isEligible ? undefined : 'Recent whole blood donation within 56-day cool-off window.',
-        bloodGroupVerificationStatus: index === 0 ? 'Unverified' : 'Verified',
-        verificationStatus: index === 0 ? 'Unverified' : 'Verified',
-        verifiedAt: index === 0 ? undefined : '2024-01-01T08:00:00Z',
-        verifiedBy: index === 0 ? undefined : 'bb-1',
-        verifiedByName: index === 0 ? undefined : 'City Central Blood Bank',
+        bloodGroupVerificationStatus: 'Verified',
+        verificationStatus: 'Verified',
+        verifiedAt: '2024-01-01T08:00:00Z',
+        verifiedBy: 'bb-1',
+        verifiedByName: 'City Central Blood Bank',
         totalDonationsCount: (index % 5) + 1,
         totalVolumeMl: ((index % 5) + 1) * 450,
         notificationPreferences: {
@@ -619,6 +595,15 @@ class DataStore {
     addUnit('A+', 'Platelets', 'Available', 'Passed', 4, 'bb-2');
     addUnit('O+', 'Whole Blood', 'Available', 'Passed', 25, 'bb-2');
 
+    // Seed verified units for WCE Sangli Blood Center (user-1792415991634)
+    addUnit('A+', 'RBC', 'Available', 'Passed', 20, 'user-1792415991634');
+    addUnit('O+', 'RBC', 'Available', 'Passed', 25, 'user-1792415991634');
+    addUnit('B+', 'RBC', 'Available', 'Passed', 15, 'user-1792415991634');
+    addUnit('O-', 'RBC', 'Available', 'Passed', 10, 'user-1792415991634');
+    addUnit('A+', 'Plasma', 'Available', 'Passed', 45, 'user-1792415991634');
+    addUnit('A+', 'Platelets', 'Available', 'Passed', 4, 'user-1792415991634');
+    addUnit('A+', 'Whole Blood', 'Available', 'Passed', 25, 'user-1792415991634');
+
     // Units pending testing
     addUnit('A+', 'RBC', 'Quarantined', 'Pending', 30);
     addUnit('B+', 'Plasma', 'Quarantined', 'In Testing', 32);
@@ -627,12 +612,20 @@ class DataStore {
     const u1327_1 = this.bloodUnits.find(u => u.id === 'UNIT-2026-8016');
     if (u1327_1) {
       u1327_1.availability = 'Reserved';
+      u1327_1.bloodBankId = 'bb-1';
+      u1327_1.bloodBankName = 'City Central Blood Center';
       u1327_1.reservedForRequestId = 'REQ-1327';
+      u1327_1.component = 'RBC';
+      u1327_1.bloodGroup = 'A+';
     }
     const u1327_2 = this.bloodUnits.find(u => u.id === 'UNIT-2026-8015');
     if (u1327_2) {
       u1327_2.availability = 'Reserved';
+      u1327_2.bloodBankId = 'bb-1';
+      u1327_2.bloodBankName = 'City Central Blood Center';
       u1327_2.reservedForRequestId = 'REQ-1327';
+      u1327_2.component = 'RBC';
+      u1327_2.bloodGroup = 'A+';
     }
 
     // 5. Seed Blood Requests & Patient Samples

@@ -749,7 +749,9 @@ export const DonorNearbyHospitals: React.FC = () => {
                     ? [selectedHospital.latitude, selectedHospital.longitude]
                     : hasActiveCoords
                     ? [Number(activeLat), Number(activeLng)]
-                    : [40.7128, -74.0060]
+                    : mapMarkers.length > 0
+                    ? [mapMarkers[0].lat, mapMarkers[0].lng]
+                    : undefined
                 }
                 zoom={12}
                 height="580px"

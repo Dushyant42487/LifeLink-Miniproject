@@ -23,6 +23,7 @@ Configure these variables in your deployment environment (e.g. AWS ECS/SSM, Kube
 | `SUPABASE_SECRET_KEY` | Secret String | Service-role key for backend server-to-database mutations. |
 | `SUPABASE_ANON_KEY` | Public String | Anonymous client key for public read operations. |
 | `LOG_LEVEL` | `info` / `warn` / `error`| Operational logging granularity. |
+| `SEED_DEV_FIXTURES` | `false` (default) | Protects production database against demo fixtures; only set `true` in local test environments. |
 
 ### Generating Cryptographic Secrets
 Generate high-entropy secrets using OpenSSL:

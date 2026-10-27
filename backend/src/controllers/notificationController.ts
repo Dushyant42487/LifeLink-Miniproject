@@ -138,8 +138,17 @@ export const markAllNotificationsRead = async (req: AuthenticatedRequest, res: R
   const userId = user.id;
   const role = user.role;
 
+  const bloodBankId = (user as any).bloodBankId;
+  const hospitalId = (user as any).hospitalId;
+
   db.notifications.forEach(n => {
-    if (n.userId === userId || n.userId === `role:${role}` || n.userId === 'all') {
+    if (
+      n.userId === userId ||
+      (bloodBankId && n.userId === bloodBankId) ||
+      (hospitalId && n.userId === hospitalId) ||
+      n.userId === `role:${role}` ||
+      n.userId === 'all'
+    ) {
       n.read = true;
     }
   });

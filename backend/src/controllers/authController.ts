@@ -143,7 +143,7 @@ export const register = async (req: Request, res: Response) => {
         passwordHash,
         role: 'donor',
         name: name.trim(),
-        bloodGroup: bloodGroup || 'O+',
+        bloodGroup: bloodGroup || 'Unspecified',
         dob: dob || '',
         gender: gender || 'Unspecified',
         phone: phone ? phone.trim() : '',

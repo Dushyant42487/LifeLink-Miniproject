@@ -311,7 +311,9 @@ describe('LifeLink Phase 8: Clean Data End-to-End Workflow Verification', () => 
         contactPerson: 'Dr. Marcus Ross',
         phone: '+1 (555) 777-3333',
         emergencyPhone: '+1 (555) 911-3333',
-        city: 'Metro City'
+        city: 'Metro City',
+        latitude: 40.7306,
+        longitude: -73.9352
       })
     });
     assert.equal(regRes.status, 201);

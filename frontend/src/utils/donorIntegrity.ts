@@ -60,7 +60,7 @@ export const checkBloodGroupDiscrepancy = (
   recordBloodGroup: string | undefined,
   profileBloodGroup: string | undefined = VERIFIED_DONOR_BLOOD_GROUP
 ): boolean => {
-  if (!recordBloodGroup || !profileBloodGroup) return false;
+  if (!recordBloodGroup || !profileBloodGroup || profileBloodGroup.trim().toLowerCase() === 'unspecified') return false;
   return recordBloodGroup.trim().toUpperCase() !== profileBloodGroup.trim().toUpperCase();
 };
 

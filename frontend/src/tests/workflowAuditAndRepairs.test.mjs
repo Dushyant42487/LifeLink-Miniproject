@@ -32,7 +32,9 @@ describe('LifeLink Workflow Audit & Comprehensive Repairs Test Suite', () => {
         registrationId: `BB-AUDIT-${ts}`,
         contactPerson: 'Director Sarah Connor',
         phone: '+1 (555) 432-1000',
-        city: 'Metro City'
+        city: 'Metro City',
+        latitude: 40.7128,
+        longitude: -74.0060
       })
     });
     assert.equal(bbRes.status, 201);
@@ -53,7 +55,9 @@ describe('LifeLink Workflow Audit & Comprehensive Repairs Test Suite', () => {
         licenseId: `HOSP-AUDIT-${ts}`,
         contactPerson: 'Dr. James Wilson',
         phone: '+1 (555) 432-2000',
-        city: 'Metro City'
+        city: 'Metro City',
+        latitude: 40.7484,
+        longitude: -73.9857
       })
     });
     assert.equal(hospRes.status, 201);
